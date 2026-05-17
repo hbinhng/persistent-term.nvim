@@ -199,19 +199,50 @@ function M.cmd_open(raw)
     return nil, msg
   end
 
-  local boot = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
-  if not boot.ok and not tmux.is_no_server(boot) then
-    return nil, "tmux set-option default-terminal failed: " .. boot.stderr
-  end
-  if tmux.version_at_least(v.version, "3.2") then
-    boot = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
-    if not boot.ok and not tmux.is_no_server(boot) then
-      return nil, "tmux set-option terminal-features failed: " .. boot.stderr
+  local function run_bootstrap()
+    local b = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
+    if not b.ok then
+      return b.stderr, "tmux set-option default-terminal failed: " .. b.stderr
     end
+    if tmux.version_at_least(v.version, "3.2") then
+      b = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
+      if not b.ok then
+        return b.stderr, "tmux set-option terminal-features failed: " .. b.stderr
+      end
+    end
+    b = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
+    if not b.ok then
+      return b.stderr, "tmux set-environment COLORTERM failed: " .. b.stderr
+    end
+    return nil
   end
-  boot = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
-  if not boot.ok and not tmux.is_no_server(boot) then
-    return nil, "tmux set-environment COLORTERM failed: " .. boot.stderr
+
+  local boot_err_raw, boot_err_msg = run_bootstrap()
+  -- If the bootstrap failed because no server exists yet, we need to start the
+  -- server first so we can apply default-terminal BEFORE creating the real
+  -- session.  Tmux overwrites the child's TERM from default-terminal at session
+  -- create time, so the option must be present on the server before new-session.
+  if boot_err_raw ~= nil then
+    if tmux.is_no_server({ stderr = boot_err_raw }) then
+      -- Start the tmux server with a short-lived init session, then bootstrap.
+      local init = tmux.run(tmux.builders.new_session({
+        session_name = "pterm_init_" .. random_hex(4),
+        cols = 80,
+        rows = 24,
+        cwd = vim.fn.getcwd(),
+        argv = { "sleep", "1" },
+      }))
+      if not init.ok then
+        return nil, "tmux new-session (server init) failed: " .. init.stderr
+      end
+      -- Server is now up; apply the bootstrap options.
+      local _, post_err = run_bootstrap()
+      if post_err then
+        return nil, post_err
+      end
+    else
+      return nil, boot_err_msg
+    end
   end
 
   local list = tmux.run(tmux.builders.list_panes())
@@ -287,6 +318,7 @@ function M.cmd_open(raw)
     pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
     return nil, "tmux new-session failed: " .. new.stderr
   end
+
   local ids = tmux.parse_new_session_output(new.stdout)
   if not ids then
     handle._closing = true

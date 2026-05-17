@@ -285,6 +285,51 @@ describe("persistent-term integration", function()
     assert.is_truthy(dx_line, "no dx row in:\n" .. out)
     assert.is_truthy(dx_line:find("dead", 1, true), "dx row missing 'dead': " .. dx_line)
   end)
+
+  it("PTerm configures the server with xterm-256color and truecolor", function()
+    vim.cmd([[PTerm tterm -- bash -c 'sleep 1; echo PTERM_TERM=$TERM; echo PTERM_COLORTERM=$COLORTERM; sleep 30']])
+    local bufnr = vim.api.nvim_get_current_buf()
+
+    -- The child must see TERM=xterm-256color and COLORTERM=truecolor in its env.
+    -- Two echoes so line-wrap at narrow terminal widths cannot truncate the assertion.
+    assert.is_truthy(wait_until(function()
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      for _, l in ipairs(lines) do
+        if l:find("PTERM_TERM=xterm-256color", 1, true) then return true end
+      end
+      return false
+    end, 5000), "child never reported PTERM_TERM=xterm-256color")
+
+    assert.is_truthy(wait_until(function()
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      for _, l in ipairs(lines) do
+        if l:find("PTERM_COLORTERM=truecolor", 1, true) then return true end
+      end
+      return false
+    end, 5000), "child never reported PTERM_COLORTERM=truecolor")
+
+    -- The server-side options must be set.
+    local opt = run({ "tmux", "-L", "persistent-term", "show-options", "-gv", "default-terminal" })
+    assert.equals(0, opt.code, "show-options default-terminal failed: " .. (opt.stderr or ""))
+    assert.equals("xterm-256color", (opt.stdout or ""):gsub("%s+$", ""))
+
+    local envr = run({ "tmux", "-L", "persistent-term", "show-environment", "-g", "COLORTERM" })
+    assert.equals(0, envr.code, "show-environment COLORTERM failed: " .. (envr.stderr or ""))
+    assert.equals("COLORTERM=truecolor", (envr.stdout or ""):gsub("%s+$", ""))
+
+    -- terminal-features is only set on tmux >= 3.2. Read the installed tmux version
+    -- and gate this sub-assertion the same way cmd_open does.
+    local vres = run({ "tmux", "-V" })
+    local vstr = (vres.stdout or ""):match("tmux%s+(%S+)")
+    if vstr and require("persistent_term.tmux").version_at_least(vstr, "3.2") then
+      local feat = run({ "tmux", "-L", "persistent-term", "show-options", "-gv", "terminal-features" })
+      assert.equals(0, feat.code, "show-options terminal-features failed: " .. (feat.stderr or ""))
+      assert.is_truthy(
+        (feat.stdout or ""):find("xterm-256color:RGB", 1, true),
+        "terminal-features did not contain xterm-256color:RGB; got: " .. tostring(feat.stdout)
+      )
+    end
+  end)
 end)
 
 describe("persistent-term crash recovery", function()
