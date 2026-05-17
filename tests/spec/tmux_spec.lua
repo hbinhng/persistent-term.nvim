@@ -116,6 +116,13 @@ describe("persistent_term.tmux builders", function()
     }, tmux.builders.set_server_option("default-terminal", "xterm-256color"))
   end)
 
+  it("set_server_env builds correct argv", function()
+    assert.same({
+      "tmux", "-L", "persistent-term",
+      "set-environment", "-g", "COLORTERM", "truecolor",
+    }, tmux.builders.set_server_env("COLORTERM", "truecolor"))
+  end)
+
   it("version_check_argv builds correct argv", function()
     assert.same({ "tmux", "-V" }, tmux.builders.version_check())
   end)

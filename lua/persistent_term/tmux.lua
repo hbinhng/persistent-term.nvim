@@ -111,6 +111,12 @@ function M.builders.set_server_option(key, value)
   return argv
 end
 
+function M.builders.set_server_env(key, value)
+  local argv = copy(SOCKET)
+  vim.list_extend(argv, { "set-environment", "-g", key, value })
+  return argv
+end
+
 function M.builders.version_check()
   return { "tmux", "-V" }
 end
