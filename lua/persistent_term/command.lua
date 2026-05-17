@@ -395,4 +395,21 @@ function M.cmd_attach(target)
   return handle
 end
 
+function M.cmd_kill(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  local name = vim.api.nvim_buf_get_name(bufnr)
+  if not name:match("^pterm://") then
+    return false, "not a persistent-term buffer"
+  end
+  local pane_id = vim.b[bufnr].persistent_term_pane_id
+  local handle = {
+    bufnr = bufnr,
+    pane_id = pane_id,
+    name = vim.b[bufnr].persistent_term_name,
+  }
+  local bridge = require("persistent_term.bridge")
+  bridge.kill(handle)
+  return true
+end
+
 return M

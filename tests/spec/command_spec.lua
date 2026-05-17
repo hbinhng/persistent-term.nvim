@@ -277,3 +277,40 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     assert.is_truthy(err:match("unknown"))
   end)
 end)
+
+describe("persistent_term.command.cmd_kill", function()
+  before_each(function()
+    package.loaded["persistent_term.command"] = nil
+    package.loaded["persistent_term.bridge"] = nil
+  end)
+
+  it("refuses outside a pterm:// buffer", function()
+    local cmd = require("persistent_term.command")
+    local ok, err = cmd.cmd_kill(vim.api.nvim_create_buf(true, true))
+    assert.is_false(ok)
+    assert.is_truthy(err:match("not a persistent%-term buffer"))
+  end)
+
+  it("kills pane and wipes buffer when invoked from a pterm:// buffer", function()
+    local killed_pane = nil
+    package.loaded["persistent_term.bridge"] = {
+      kill = function(handle)
+        killed_pane = handle.pane_id
+        if vim.api.nvim_buf_is_valid(handle.bufnr) then
+          vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+        end
+      end,
+    }
+    local bufnr = vim.api.nvim_create_buf(true, true)
+    vim.api.nvim_buf_set_name(bufnr, "pterm://dev")
+    vim.b[bufnr].persistent_term_name = "dev"
+    vim.b[bufnr].persistent_term_pane_id = "%77"
+
+    local cmd = require("persistent_term.command")
+    local ok, err = cmd.cmd_kill(bufnr)
+    assert.is_true(ok)
+    assert.is_nil(err)
+    assert.equals("%77", killed_pane)
+    assert.is_false(vim.api.nvim_buf_is_valid(bufnr))
+  end)
+end)
