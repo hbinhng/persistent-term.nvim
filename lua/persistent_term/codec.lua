@@ -105,4 +105,92 @@ function M.is_libvterm_response(data)
   return table.concat(out)
 end
 
+-- Encoder bucket tags. Stable values; tested directly.
+local BUCKET_LITERAL = 1
+local BUCKET_HEX = 2
+local BUCKET_LITERAL_BYTE = 3
+
+local function is_printable_allowlist(c)
+  -- A-Z, a-z, 0-9
+  if (c >= 0x30 and c <= 0x39) or (c >= 0x41 and c <= 0x5a) or (c >= 0x61 and c <= 0x7a) then
+    return true
+  end
+  -- + / ) : , _
+  return c == 0x2b or c == 0x2f or c == 0x29 or c == 0x3a or c == 0x2c or c == 0x5f
+end
+
+local function bucket_for(c, literal_byte_supported)
+  if is_printable_allowlist(c) then
+    return BUCKET_LITERAL
+  end
+  if c <= 0x1f and literal_byte_supported then
+    return BUCKET_LITERAL_BYTE
+  end
+  return BUCKET_HEX
+end
+
+local function version_ge_3_0a(version)
+  -- iTerm2 encodes 3.0a as decimal 3.01. We compare component tuples instead
+  -- (simpler in Lua): "3.0" -> {3, 0}, "3.0a" -> {3, 0, "a"}.
+  local major, minor = version:match("^(%d+)%.(%d+)")
+  if not major then
+    return false
+  end
+  major, minor = tonumber(major), tonumber(minor)
+  if major > 3 then
+    return true
+  end
+  if major < 3 then
+    return false
+  end
+  if minor > 0 then
+    return true
+  end
+  -- major.minor == 3.0; need a suffix letter to be 3.0a+.
+  local suffix = version:match("^%d+%.%d+(%a+)")
+  return suffix ~= nil
+end
+
+--- Encode a byte string into one or more `send-keys` command lines for tmux.
+--- @param bytes string raw byte input (already auto-response-filtered)
+--- @param pane_id string tmux pane id like "%1"
+--- @param version string tmux version (e.g. "3.0", "3.0a", "3.4-rc1")
+--- @return string[] list of command lines (no trailing newline), to be sent
+---         in order over the control-mode channel.
+function M.encode_send_keys(bytes, pane_id, version)
+  if bytes == "" then
+    return {}
+  end
+  local lb = version_ge_3_0a(version)
+
+  local cmds = {}
+  local i, n = 1, #bytes
+  while i <= n do
+    local c = bytes:byte(i)
+    local b = bucket_for(c, lb)
+    local j = i
+    while j <= n and bucket_for(bytes:byte(j), lb) == b do
+      j = j + 1
+    end
+    local run = bytes:sub(i, j - 1)
+    if b == BUCKET_LITERAL then
+      table.insert(cmds, "send-keys -lt " .. pane_id .. " " .. M.shell_escape(run))
+    elseif b == BUCKET_HEX then
+      local parts = {}
+      for k = 1, #run do
+        table.insert(parts, string.format("0x%02x", run:byte(k)))
+      end
+      table.insert(cmds, "send-keys -t " .. pane_id .. " " .. table.concat(parts, " "))
+    else -- BUCKET_LITERAL_BYTE
+      local parts = {}
+      for k = 1, #run do
+        table.insert(parts, string.format("%02x", run:byte(k)))
+      end
+      table.insert(cmds, "send-keys -H -t " .. pane_id .. " " .. table.concat(parts, " "))
+    end
+    i = j
+  end
+  return cmds
+end
+
 return M

@@ -151,3 +151,74 @@ describe("codec.is_libvterm_response", function()
     assert.equals("\27a", codec.is_libvterm_response("\27a"))
   end)
 end)
+
+describe("codec.encode_send_keys", function()
+  local codec
+  before_each(function()
+    package.loaded["persistent_term.codec"] = nil
+    codec = require("persistent_term.codec")
+  end)
+
+  it("encodes a pure printable string as one literal command", function()
+    local cmds = codec.encode_send_keys("hello", "%1", "3.4")
+    assert.same({ "send-keys -lt %1 'hello'" }, cmds)
+  end)
+
+  it("encodes a single Enter (0x0d) as literal-byte on tmux >= 3.0a", function()
+    local cmds = codec.encode_send_keys("\r", "%1", "3.0a")
+    assert.same({ "send-keys -H -t %1 0d" }, cmds)
+  end)
+
+  it("encodes a single Enter (0x0d) as hex on tmux 3.0", function()
+    local cmds = codec.encode_send_keys("\r", "%1", "3.0")
+    assert.same({ "send-keys -t %1 0x0d" }, cmds)
+  end)
+
+  it("encodes left-arrow (ESC [ D) as three batched commands on 3.4", function()
+    -- \e is C0 -> literal-byte; [ is hex (not in printable allow-list); D is alnum -> literal.
+    local cmds = codec.encode_send_keys("\27[D", "%1", "3.4")
+    assert.same({
+      "send-keys -H -t %1 1b",
+      "send-keys -t %1 0x5b",
+      "send-keys -lt %1 'D'",
+    }, cmds)
+  end)
+
+  it("batches a run of printable bytes into one command", function()
+    local cmds = codec.encode_send_keys("abc123", "%2", "3.4")
+    assert.same({ "send-keys -lt %2 'abc123'" }, cmds)
+  end)
+
+  it("batches a run of C0 bytes into one literal-byte command", function()
+    -- \x01\x02\x03 -> Ctrl-A Ctrl-B Ctrl-C
+    local cmds = codec.encode_send_keys("\1\2\3", "%1", "3.4")
+    assert.same({ "send-keys -H -t %1 01 02 03" }, cmds)
+  end)
+
+  it("escapes a literal single quote inside a printable run", function()
+    -- Printable run cannot include ', so the ' splits the run into two buckets.
+    -- ' is not alnum, not in {+/):,_} -> hex.
+    local cmds = codec.encode_send_keys("a'b", "%1", "3.4")
+    assert.same({
+      "send-keys -lt %1 'a'",
+      "send-keys -t %1 0x27",
+      "send-keys -lt %1 'b'",
+    }, cmds)
+  end)
+
+  it("encodes UTF-8 multibyte sequences as hex (one command per run)", function()
+    -- é is 0xc3 0xa9; both >= 0x80, both hex bucket.
+    local cmds = codec.encode_send_keys("\xc3\xa9", "%1", "3.4")
+    assert.same({ "send-keys -t %1 0xc3 0xa9" }, cmds)
+  end)
+
+  it("includes the printable allow-list special chars in the literal bucket", function()
+    local cmds = codec.encode_send_keys("a+b/c)d:e,f_g", "%1", "3.4")
+    assert.same({ "send-keys -lt %1 'a+b/c)d:e,f_g'" }, cmds)
+  end)
+
+  it("returns an empty list for empty input", function()
+    local cmds = codec.encode_send_keys("", "%1", "3.4")
+    assert.same({}, cmds)
+  end)
+end)
