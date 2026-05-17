@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"net"
@@ -27,13 +26,24 @@ func handshake(sockPath, token string, timeout time.Duration) (net.Conn, error) 
 		conn.Close()
 		return nil, fmt.Errorf("write auth: %w", err)
 	}
-	r := bufio.NewReader(conn)
-	line, err := r.ReadString('\n')
-	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("read auth reply: %w", err)
+	const maxReplyLen = 256
+	var lineBuf []byte
+	oneByte := make([]byte, 1)
+	for {
+		if _, err := conn.Read(oneByte); err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("read auth reply: %w", err)
+		}
+		if oneByte[0] == '\n' {
+			break
+		}
+		lineBuf = append(lineBuf, oneByte[0])
+		if len(lineBuf) >= maxReplyLen {
+			conn.Close()
+			return nil, errors.New("auth reply too long")
+		}
 	}
-	line = strings.TrimRight(line, "\n")
+	line := string(lineBuf)
 	if line == "OK" {
 		// Clear the deadline now that we're in raw mode.
 		if err := conn.SetDeadline(time.Time{}); err != nil {
