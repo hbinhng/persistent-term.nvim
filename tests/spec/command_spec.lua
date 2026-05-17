@@ -136,3 +136,144 @@ describe("persistent_term.command.cmd_open", function()
     assert.is_truthy(err:match("already exists"))
   end)
 end)
+
+describe("persistent_term.command.cmd_attach + complete_attach", function()
+  before_each(function()
+    package.loaded["persistent_term.command"] = nil
+    package.loaded["persistent_term.bridge"] = nil
+  end)
+
+  it("complete_attach returns names and pane_ids from list-panes", function()
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      check_version = function(_) return { ok = true } end,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      run = function(_)
+        return { ok = true, code = 0, stdout = "%12 dev\n%13 test\n%14 \n", stderr = "" }
+      end,
+    }
+    local cmd = require("persistent_term.command")
+    local items = cmd.complete_attach("", "PTermAttach ", 12)
+    table.sort(items)
+    assert.same({ "%12", "%13", "%14", "dev", "test" }, items)
+  end)
+
+  it("complete_attach filters by prefix", function()
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      check_version = function(_) return { ok = true } end,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      run = function(_)
+        return { ok = true, code = 0, stdout = "%12 dev\n%13 dx\n%14 other\n", stderr = "" }
+      end,
+    }
+    local cmd = require("persistent_term.command")
+    local items = cmd.complete_attach("d", "PTermAttach d", 13)
+    table.sort(items)
+    assert.same({ "dev", "dx" }, items)
+  end)
+
+  it("cmd_attach by name: replay history then pipe-pane", function()
+    local calls = {}
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      check_version = function(_) return { ok = true, version = "3.4" } end,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      run = function(argv)
+        table.insert(calls, argv)
+        if argv[4] == "list-panes" then
+          return { ok = true, stdout = "%12 dev\n", code = 0, stderr = "" }
+        elseif argv[4] == "capture-pane" then
+          return { ok = true, stdout = "history line\n", code = 0, stderr = "" }
+        end
+        return { ok = true, stdout = "", code = 0, stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/h" end,
+      is_installed = function() return true end,
+    }
+    local sent = {}
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(name)
+        local bufnr = vim.api.nvim_create_buf(true, true)
+        return { bufnr = bufnr, chan = -1, _on_input_holder = { _on_input = function() end } }
+      end,
+      start_server = function(opts)
+        vim.defer_fn(function() opts.on_attach({ is_closing = function() return false end, close = function() end, write = function() end, read_start = function() end }) end, 10)
+        return { close = function() end }
+      end,
+      attach = function(_, _) end,
+      install_buffer_hook = function(_) end,
+      chan_send_history = function(_, data) table.insert(sent, data) end,
+    }
+    local cmd = require("persistent_term.command")
+    local handle, err = cmd.cmd_attach("dev")
+    assert.is_nil(err)
+    assert.is_truthy(handle)
+    assert.equals("%12", handle.pane_id)
+    local capture_idx, pipe_idx
+    for i, argv in ipairs(calls) do
+      if argv[4] == "capture-pane" then capture_idx = i end
+      if argv[4] == "pipe-pane" then pipe_idx = i end
+    end
+    assert.is_truthy(capture_idx and pipe_idx and capture_idx < pipe_idx)
+    assert.same({ "history line\n" }, sent)
+    vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+  end)
+
+  it("cmd_attach by raw pane_id works without name lookup", function()
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      check_version = function(_) return { ok = true, version = "3.4" } end,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      run = function(argv)
+        if argv[4] == "list-panes" then
+          return { ok = true, stdout = "%12 \n", code = 0, stderr = "" }
+        elseif argv[4] == "capture-pane" then
+          return { ok = true, stdout = "", code = 0, stderr = "" }
+        end
+        return { ok = true, stdout = "", code = 0, stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/h" end,
+      is_installed = function() return true end,
+    }
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(name)
+        local bufnr = vim.api.nvim_create_buf(true, true)
+        return { bufnr = bufnr, chan = -1, _on_input_holder = { _on_input = function() end } }
+      end,
+      start_server = function(opts)
+        vim.defer_fn(function() opts.on_attach({ is_closing = function() return false end, close = function() end, write = function() end, read_start = function() end }) end, 10)
+        return { close = function() end }
+      end,
+      attach = function(_, _) end,
+      install_buffer_hook = function(_) end,
+      chan_send_history = function(_, _) end,
+    }
+    local cmd = require("persistent_term.command")
+    local handle, err = cmd.cmd_attach("%12")
+    assert.is_nil(err)
+    assert.equals("%12", handle.pane_id)
+    vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+  end)
+
+  it("cmd_attach refuses unknown name", function()
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      check_version = function(_) return { ok = true } end,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      run = function(_) return { ok = true, stdout = "%99 other\n", code = 0, stderr = "" } end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/h" end,
+      is_installed = function() return true end,
+    }
+    local cmd = require("persistent_term.command")
+    local handle, err = cmd.cmd_attach("ghost")
+    assert.is_nil(handle)
+    assert.is_truthy(err:match("unknown"))
+  end)
+end)

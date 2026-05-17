@@ -255,4 +255,144 @@ function M.cmd_open(raw)
   return handle
 end
 
+local PANE_ID_PATTERN = "^%%[0-9]+$"
+
+local function list_known(tmux)
+  local res = tmux.run(tmux.builders.list_panes())
+  if not res.ok then
+    return {}, "tmux list-panes failed: " .. res.stderr
+  end
+  return tmux.parse_list_panes(res.stdout)
+end
+
+function M.complete_attach(arg_lead, _cmd_line, _cursor_pos)
+  local tmux = require("persistent_term.tmux")
+  local rows = list_known(tmux)
+  local out = {}
+  for _, row in ipairs(rows) do
+    if row.name ~= "" then
+      table.insert(out, row.name)
+    end
+    table.insert(out, row.pane_id)
+  end
+  if arg_lead == "" then
+    return out
+  end
+  local filtered = {}
+  for _, item in ipairs(out) do
+    if vim.startswith(item, arg_lead) then
+      table.insert(filtered, item)
+    end
+  end
+  return filtered
+end
+
+local function find_pane(rows, target)
+  if target:match(PANE_ID_PATTERN) then
+    for _, r in ipairs(rows) do
+      if r.pane_id == target then return r end
+    end
+  else
+    for _, r in ipairs(rows) do
+      if r.name == target then return r end
+    end
+  end
+  return nil
+end
+
+function M.cmd_attach(target)
+  if type(target) ~= "string" or target == "" then
+    return nil, "usage: :PTermAttach {name|pane_id}"
+  end
+  local tmux = require("persistent_term.tmux")
+  local install = require("persistent_term.install")
+  local bridge = require("persistent_term.bridge")
+  local log = require("persistent_term.log")
+
+  local v = tmux.check_version("3.0")
+  if not v.ok then return nil, v.reason end
+  if not install.is_installed() then
+    return nil, "helper binary not installed; run :PTermInstall"
+  end
+
+  local list = tmux.run(tmux.builders.list_panes())
+  if not list.ok then return nil, "tmux list-panes failed: " .. list.stderr end
+  local rows = tmux.parse_list_panes(list.stdout)
+  local row = find_pane(rows, target)
+  if not row then
+    return nil, "unknown pane: " .. target
+  end
+
+  local pane_id = row.pane_id
+  local name = (row.name ~= "" and row.name) or pane_id
+
+  -- If a pterm://{name} buffer is already attached, focus it.
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(bufnr) then
+      local bname = vim.api.nvim_buf_get_name(bufnr)
+      if bname == "pterm://" .. name then
+        vim.cmd.buffer(bufnr)
+        return { bufnr = bufnr, pane_id = pane_id, name = name }
+      end
+    end
+  end
+
+  local dir = dir_for_socket()
+  ensure_runtime_dir(dir)
+  local socket_path = dir .. "/" .. random_hex(16) .. ".sock"
+  local token = random_hex(32)
+  local buf = bridge.create_buffer(name)
+  local handle = {
+    bufnr = buf.bufnr, chan = buf.chan,
+    name = name, pane_id = pane_id,
+    _on_input_holder = buf._on_input_holder,
+  }
+
+  -- Replay scrollback.
+  local cap = tmux.run(tmux.builders.capture_pane(pane_id))
+  if cap.ok and cap.stdout and cap.stdout ~= "" then
+    bridge.chan_send_history(handle, cap.stdout)
+  end
+
+  local server
+  server = bridge.start_server({
+    socket_path = socket_path,
+    token = token,
+    on_attach = function(client)
+      handle._attached = true
+      bridge.attach(handle, client)
+    end,
+    on_error = function(reason)
+      log.warn("bridge: " .. reason)
+    end,
+  })
+  handle._server = server
+
+  vim.defer_fn(function()
+    if handle._attached or handle._closing then return end
+    log.error(string.format('handshake timeout while attaching to %s', pane_id))
+    bridge.detach(handle, "handshake timeout")
+    if vim.api.nvim_buf_is_valid(handle.bufnr) then
+      vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+    end
+  end, 2000)
+
+  local helper = install.binary_path()
+  local pipe = tmux.run(tmux.builders.pipe_pane({
+    pane_id = pane_id,
+    bin_path = helper,
+    socket_path = socket_path,
+    token = token,
+  }))
+  if not pipe.ok then
+    server:close()
+    pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
+    return nil, "tmux pipe-pane failed: " .. pipe.stderr
+  end
+
+  vim.b[buf.bufnr].persistent_term_pane_id = pane_id
+  bridge.install_buffer_hook(handle)
+  return handle
+end
+
 return M
