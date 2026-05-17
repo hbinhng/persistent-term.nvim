@@ -21,6 +21,8 @@ describe("persistent_term.tmux builders", function()
       "-s", "pterm_abc",
       "-x", "120", "-y", "32",
       "-c", "/home/u",
+      "-e", "TERM=xterm-256color",
+      "-e", "COLORTERM=truecolor",
       "-P", "-F", "#{session_id}\t#{pane_id}\t#{window_id}",
       "--", "npm", "run", "dev",
     }, argv)

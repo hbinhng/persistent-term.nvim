@@ -28,6 +28,8 @@ function M.builders.new_session(opts)
     "-s", opts.session_name,
     "-x", tostring(opts.cols), "-y", tostring(opts.rows),
     "-c", opts.cwd,
+    "-e", "TERM=xterm-256color",
+    "-e", "COLORTERM=truecolor",
     "-P", "-F", "#{session_id}\t#{pane_id}\t#{window_id}",
     "--",
   })
