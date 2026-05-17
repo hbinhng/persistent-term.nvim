@@ -131,9 +131,78 @@ describe("persistent_term.command.cmd_open", function()
       table.insert(subs, argv[4])
     end
     assert.same(
-      { "list-panes", "new-session", "set-option", "set-option", "pipe-pane" },
+      {
+        "set-option", "set-option", "set-environment",
+        "list-panes", "new-session", "set-option", "set-option", "pipe-pane",
+      },
       subs
     )
+    vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+  end)
+
+  it("issues bootstrap (default-terminal + terminal-features + COLORTERM) before new-session on tmux 3.2+", function()
+    local calls = {}
+    local fake_builders = require("persistent_term.tmux").builders
+    package.loaded["persistent_term.tmux"] = {
+      builders = fake_builders,
+      check_version = function(_) return { ok = true, version = "3.2" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
+      is_no_server = require("persistent_term.tmux").is_no_server,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      parse_new_session_output = require("persistent_term.tmux").parse_new_session_output,
+      run = function(argv)
+        table.insert(calls, argv)
+        local sub = argv[4]
+        if sub == "list-panes" then
+          return { ok = true, code = 0, stdout = "", stderr = "" }
+        elseif sub == "new-session" then
+          return { ok = true, code = 0, stdout = "$1\t%10\t@2\n", stderr = "" }
+        end
+        return { ok = true, code = 0, stdout = "", stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/persistent-term-pipe" end,
+      is_installed = function() return true end,
+    }
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(_)
+        local bufnr = vim.api.nvim_create_buf(true, true)
+        return { bufnr = bufnr, chan = -1, _on_input_holder = { _on_input = function() end } }
+      end,
+      start_server = function(opts)
+        vim.defer_fn(function() opts.on_attach({ is_closing = function() return false end, close = function() end, write = function() end, read_start = function() end }) end, 10)
+        return { close = function() end }
+      end,
+      attach = function(_, _) end,
+      install_buffer_hook = function(_) end,
+      resize_to = function(_, _, _) end,
+      detach = function(_, _) end,
+      kill = function(_) end,
+    }
+
+    command = require("persistent_term.command")
+    local handle, err = command.cmd_open("dev -- bash -c hi")
+    assert.is_nil(err)
+    assert.is_truthy(handle)
+
+    -- The first three tmux invocations are the bootstrap, in this exact order.
+    assert.is_true(#calls >= 3, "expected at least 3 tmux calls; got " .. #calls)
+    assert.same(
+      { "tmux", "-L", "persistent-term", "set-option", "-g", "default-terminal", "xterm-256color" },
+      calls[1]
+    )
+    assert.same(
+      { "tmux", "-L", "persistent-term", "set-option", "-g", "terminal-features", "xterm-256color:RGB" },
+      calls[2]
+    )
+    assert.same(
+      { "tmux", "-L", "persistent-term", "set-environment", "-g", "COLORTERM", "truecolor" },
+      calls[3]
+    )
+    -- And the 4th call is list-panes (bootstrap finished before pane discovery).
+    assert.equals("list-panes", calls[4][4])
+
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end)
 
