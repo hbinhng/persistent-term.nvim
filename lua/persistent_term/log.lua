@@ -1,9 +1,11 @@
--- lua/persistent_term/log.lua
 local M = {}
 
 local debug_enabled = (vim.env.PERSISTENT_TERM_DEBUG == "1")
 
-local function log_path()
+-- Resolve the log file path once, at module load. This must NOT happen at
+-- write time because callers may be in libuv fast-event contexts where
+-- vim.fn calls raise E5560.
+local function resolve_path()
   if vim.env.PERSISTENT_TERM_LOG_PATH and vim.env.PERSISTENT_TERM_LOG_PATH ~= "" then
     return vim.env.PERSISTENT_TERM_LOG_PATH
   end
@@ -12,19 +14,29 @@ local function log_path()
   return dir .. "/persistent-term.log"
 end
 
-local function maybe_rotate(path)
-  local size = vim.fn.getfsize(path)
-  if size <= 0 or size <= 1024 * 1024 then
-    return
+local log_file_path = resolve_path()
+
+local function file_size(path)
+  -- Pure Lua I/O, safe in fast-event contexts.
+  local f = io.open(path, "r")
+  if not f then
+    return 0
   end
-  os.rename(path, path .. ".1")
+  local size = f:seek("end") or 0
+  f:close()
+  return size
+end
+
+local function maybe_rotate(path)
+  if file_size(path) > 1024 * 1024 then
+    os.rename(path, path .. ".1")
+  end
 end
 
 local function write(level, msg)
-  local path = log_path()
-  maybe_rotate(path)
+  maybe_rotate(log_file_path)
   local line = string.format("%s %-5s %s\n", os.date("!%Y-%m-%dT%H:%M:%SZ"), level, msg)
-  local fp = io.open(path, "a")
+  local fp = io.open(log_file_path, "a")
   if not fp then
     return
   end

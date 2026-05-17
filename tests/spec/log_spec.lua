@@ -13,6 +13,7 @@ describe("persistent_term.log", function()
 
   after_each(function()
     vim.fn.delete(tmp_log)
+    vim.fn.delete(tmp_log .. ".1")
     vim.env.PERSISTENT_TERM_LOG_PATH = nil
   end)
 
@@ -32,10 +33,7 @@ describe("persistent_term.log", function()
 
   it("skips DEBUG when env is unset", function()
     log.debug("noisy")
-    local ok, lines = pcall(vim.fn.readfile, tmp_log)
-    if ok then
-      assert.equals(0, #lines)
-    end
+    assert.equals(0, vim.fn.filereadable(tmp_log))
   end)
 
   it("writes DEBUG when PERSISTENT_TERM_DEBUG=1", function()
