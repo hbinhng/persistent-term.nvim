@@ -202,28 +202,28 @@ function M.cmd_open(raw)
   local function run_bootstrap()
     local b = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
     if not b.ok then
-      return b.stderr, "tmux set-option default-terminal failed: " .. b.stderr
+      return b, "tmux set-option default-terminal failed: " .. b.stderr
     end
     if tmux.version_at_least(v.version, "3.2") then
       b = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
       if not b.ok then
-        return b.stderr, "tmux set-option terminal-features failed: " .. b.stderr
+        return b, "tmux set-option terminal-features failed: " .. b.stderr
       end
     end
     b = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
     if not b.ok then
-      return b.stderr, "tmux set-environment COLORTERM failed: " .. b.stderr
+      return b, "tmux set-environment COLORTERM failed: " .. b.stderr
     end
     return nil
   end
 
-  local boot_err_raw, boot_err_msg = run_bootstrap()
+  local boot_result, boot_err_msg = run_bootstrap()
   -- If the bootstrap failed because no server exists yet, we need to start the
   -- server first so we can apply default-terminal BEFORE creating the real
   -- session.  Tmux overwrites the child's TERM from default-terminal at session
   -- create time, so the option must be present on the server before new-session.
-  if boot_err_raw ~= nil then
-    if tmux.is_no_server({ stderr = boot_err_raw }) then
+  if boot_result ~= nil then
+    if tmux.is_no_server(boot_result) then
       -- Start the tmux server with a short-lived init session, then bootstrap.
       local init = tmux.run(tmux.builders.new_session({
         session_name = "pterm_init_" .. random_hex(4),
@@ -238,7 +238,7 @@ function M.cmd_open(raw)
       -- Server is now up; apply the bootstrap options.
       local _, post_err = run_bootstrap()
       if post_err then
-        return nil, post_err
+        return nil, "after server init: " .. post_err
       end
     else
       return nil, boot_err_msg

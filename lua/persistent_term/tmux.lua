@@ -28,6 +28,11 @@ function M.builders.new_session(opts)
     "-s", opts.session_name,
     "-x", tostring(opts.cols), "-y", tostring(opts.rows),
     "-c", opts.cwd,
+    -- The session env is visible via `tmux show-environment`; tmux itself
+    -- overrides the child's TERM from `default-terminal` (set in cmd_open's
+    -- bootstrap), so these `-e` flags do not control the child's TERM directly.
+    -- They are kept as a documentation-of-intent and for tools that inspect
+    -- session env rather than child process env.
     "-e", "TERM=xterm-256color",
     "-e", "COLORTERM=truecolor",
     "-P", "-F", "#{session_id}\t#{pane_id}\t#{window_id}",
