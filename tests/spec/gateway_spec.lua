@@ -120,13 +120,15 @@ describe("gateway command queue", function()
     local gw = gateway.new({ transport = t })
     gw:start()
     t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
-    -- Drain the 4 bootstrap commands queued by _run_bootstrap.
+    -- Drain the 5 bootstrap commands queued by _run_bootstrap.
     t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n") -- display-message (version)
     t.feed("%begin 3 2 1\n%end 3 2 1\n") -- set-option default-terminal
     t.feed("%begin 4 3 1\n%end 4 3 1\n") -- set-environment COLORTERM
     t.feed("%begin 5 4 1\n%end 5 4 1\n") -- display-message (2nd, gates terminal-features)
     -- terminal-features set-option was written directly; drain its ack too.
     t.feed("%begin 6 5 1\n%end 6 5 1\n")
+    -- refresh_pane_map sends list-windows; drain its ack.
+    t.feed("%begin 7 6 1\n%end 7 6 1\n")
     return gw
   end
 

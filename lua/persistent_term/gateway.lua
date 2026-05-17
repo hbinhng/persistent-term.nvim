@@ -249,6 +249,7 @@ function Gateway:_run_bootstrap()
       table.insert(self_ref._pending, { cmd = "<deferred-terminal-features>", cb = function() end })
     end
   end)
+  self:refresh_pane_map(function() end)
 end
 
 function Gateway:ensure_started(timeout_ms)
@@ -285,6 +286,38 @@ function Gateway:forget_pane_by_window(window_id)
       self._panes_by_name[n] = nil
     end
   end
+end
+
+function Gateway:all_panes()
+  local out = {}
+  for n, e in pairs(self._panes_by_name or {}) do
+    table.insert(out, { name = n, pane_id = e.pane_id, window_id = e.window_id, dead = e.dead or false })
+  end
+  table.sort(out, function(a, b)
+    return a.name < b.name
+  end)
+  return out
+end
+
+function Gateway:refresh_pane_map(cb)
+  self:send_cmd("list-windows -t pterm -F '#{window_id}\t#{pane_id}\t#{@pterm_name}\t#{pane_dead}'", function(r)
+    if r.ok then
+      local rows = require("persistent_term.tmux").parse_list_panes(r.stdout)
+      self._panes_by_name = {}
+      for _, row in ipairs(rows) do
+        if row.name ~= "" then
+          self._panes_by_name[row.name] = {
+            pane_id = row.pane_id,
+            window_id = row.window_id,
+            dead = row.dead,
+          }
+        end
+      end
+    end
+    if cb then
+      cb()
+    end
+  end)
 end
 
 local _singleton

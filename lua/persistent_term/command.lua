@@ -217,24 +217,14 @@ end
 local PANE_ID_PATTERN = "^%%[0-9]+$"
 
 function M.complete_attach(arg_lead, _cmd_line, _cursor_pos)
-  local tmux = require("persistent_term.tmux")
   local gw = gateway()
-  local panes = gw.panes_by_name or {}
-  local out = {}
-  for name, entry in pairs(panes) do
-    table.insert(out, name)
-    table.insert(out, entry.pane_id)
+  if gw:state() ~= "ready" then
+    return {}
   end
-  -- Also query tmux directly as a fallback.
-  local res = tmux.run(tmux.builders.list_panes and tmux.builders.list_panes() or {})
-  if res and res.ok and res.stdout then
-    local rows = tmux.parse_list_panes(res.stdout)
-    for _, row in ipairs(rows) do
-      if row.name ~= "" then
-        table.insert(out, row.name)
-      end
-      table.insert(out, row.pane_id)
-    end
+  local out = {}
+  for _, p in ipairs(gw:all_panes()) do
+    table.insert(out, p.name)
+    table.insert(out, p.pane_id)
   end
   if arg_lead == "" then
     return out
@@ -341,37 +331,28 @@ function M.cmd_kill(bufnr)
 end
 
 function M.list()
-  local tmux = require("persistent_term.tmux")
-  local res = tmux.run(tmux.builders.list_panes())
-  if tmux.is_no_server(res) then
+  local gw = gateway()
+  if gw:state() ~= "ready" then
     return {}
   end
-  if not res.ok then
-    require("persistent_term.log").warn("tmux list-panes failed: " .. (res.stderr or ""))
-    return {}
-  end
-  local rows = tmux.parse_list_panes(res.stdout)
-
+  local rows = gw:all_panes()
   local attached = {}
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    local bname = vim.api.nvim_buf_get_name(bufnr)
-    local match = bname:match("^pterm://([^%s]+)$")
-    if match then
-      attached[match] = true
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    local bn = vim.api.nvim_buf_get_name(b)
+    local m = bn:match("^pterm://([^%s]+)$")
+    if m then
+      attached[m] = true
     end
   end
-
   local out = {}
-  for _, row in ipairs(rows) do
-    if row.name and row.name ~= "" then
-      table.insert(out, {
-        name = row.name,
-        pane_id = row.pane_id,
-        window_id = row.window_id,
-        attached = attached[row.name] == true,
-        status = row.dead and "dead" or "live",
-      })
-    end
+  for _, r in ipairs(rows) do
+    table.insert(out, {
+      name = r.name,
+      pane_id = r.pane_id,
+      window_id = r.window_id,
+      attached = attached[r.name] == true,
+      status = r.dead and "dead" or "live",
+    })
   end
   return out
 end
@@ -385,12 +366,7 @@ function M.cmd_list()
   local headers = { "NAME", "PANE", "ATTACHED", "STATUS" }
   local data = {}
   for _, r in ipairs(rows) do
-    table.insert(data, {
-      r.name,
-      r.pane_id,
-      r.attached and "yes" or "no",
-      r.status,
-    })
+    table.insert(data, { r.name, r.pane_id, r.attached and "yes" or "no", r.status })
   end
   local widths = { #headers[1], #headers[2], #headers[3], #headers[4] }
   for _, d in ipairs(data) do

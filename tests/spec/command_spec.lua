@@ -251,3 +251,72 @@ describe("persistent_term.command cmd_kill via gateway", function()
     assert.is_truthy(err:find("not a persistent%-term buffer"))
   end)
 end)
+
+describe("persistent_term.command list/complete via gateway", function()
+  local command, fake_gw
+
+  before_each(function()
+    fake_gw = {
+      state_ = "ready",
+      version_ = "3.4",
+      pending = {},
+      panes_by_name = {
+        dev = { pane_id = "%1", window_id = "@1" },
+        test = { pane_id = "%2", window_id = "@2" },
+      },
+    }
+    function fake_gw:state()
+      return self.state_
+    end
+    function fake_gw:version()
+      return self.version_
+    end
+    function fake_gw:ensure_started(_)
+      return true
+    end
+    function fake_gw:send_cmd(c, cb)
+      table.insert(self.pending, { cmd = c, cb = cb })
+    end
+    function fake_gw:get_pane_by_name(n)
+      return self.panes_by_name[n]
+    end
+    function fake_gw:all_panes()
+      local out = {}
+      for n, e in pairs(self.panes_by_name) do
+        table.insert(out, { name = n, pane_id = e.pane_id, window_id = e.window_id, dead = false })
+      end
+      table.sort(out, function(a, b)
+        return a.name < b.name
+      end)
+      return out
+    end
+    function fake_gw:refresh_pane_map(_cb)
+      _cb()
+    end
+    package.loaded["persistent_term.gateway"] = {
+      singleton = function()
+        return fake_gw
+      end,
+    }
+    package.loaded["persistent_term.command"] = nil
+    command = require("persistent_term.command")
+  end)
+
+  it("list() returns the pane map sorted by name", function()
+    local rows = command.list()
+    assert.equals(2, #rows)
+    assert.equals("dev", rows[1].name)
+    assert.equals("test", rows[2].name)
+  end)
+
+  it("complete_attach returns names plus pane ids, filtered by arg_lead", function()
+    local matches = command.complete_attach("de", "", 0)
+    -- Should contain "dev" but not "test" or "%2".
+    local found = {}
+    for _, m in ipairs(matches) do
+      found[m] = true
+    end
+    assert.is_true(found["dev"])
+    assert.is_nil(found["test"])
+  end)
+end)
