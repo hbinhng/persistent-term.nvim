@@ -1,100 +1,6 @@
+-- lua/persistent_term/bridge.lua
 local uv = vim.uv or vim.loop
-
 local M = {}
-
-local AUTH_PATTERN = "^AUTH%s+(%S+)\n$"
-
-local function reply(client, line)
-  client:write(line, function() end)
-end
-
-local function reply_and_close(client, line)
-  client:write(line, function() client:close() end)
-end
-
-local function handle_client_handshake(client, expected_token, on_attach, on_error)
-  local buf = {}
-  client:read_start(function(err, chunk)
-    if err then
-      on_error("read: " .. err)
-      client:close()
-      return
-    end
-    if not chunk then
-      client:close()
-      return
-    end
-    table.insert(buf, chunk)
-    local line = table.concat(buf)
-    -- We treat the AUTH line as the first newline-terminated chunk.
-    local nl = line:find("\n", 1, true)
-    if nl then
-      client:read_stop()
-      local auth_line = line:sub(1, nl)   -- includes the trailing \n
-      -- Note: line:sub(nl + 1) (any bytes after \n) is currently silently dropped.
-      -- The Go helper's protocol guarantees no post-AUTH bytes arrive before OK
-      -- is received, so this is safe today. If you change the helper to pipeline,
-      -- you must rework this path to forward leftover bytes to on_attach.
-      local token = auth_line:match(AUTH_PATTERN)
-      if not token then
-        reply_and_close(client, "ERR malformed\n")
-        on_error("malformed handshake: " .. vim.inspect(auth_line))
-        return
-      end
-      if token ~= expected_token then
-        reply_and_close(client, "ERR auth\n")
-        on_error("auth failed")
-        return
-      end
-      reply(client, "OK\n")
-      on_attach(client)
-    end
-  end)
-end
-
-local function bind_listen(socket_path, opts)
-  local server = uv.new_pipe(false)
-  -- Make sure no stale socket file is in the way.
-  pcall(os.remove, socket_path)
-  local ok, err = server:bind(socket_path)
-  if not ok then
-    server:close()
-    error("bridge: bind " .. socket_path .. ": " .. tostring(err))
-  end
-  ok, err = server:listen(1, function(lerr)
-    if lerr then
-      opts.on_error("listen: " .. lerr)
-      return
-    end
-    local client = uv.new_pipe(false)
-    server:accept(client)
-    handle_client_handshake(client, opts.token, opts.on_attach, opts.on_error)
-  end)
-  if not ok then
-    server:close()
-    error("bridge: listen " .. socket_path .. ": " .. tostring(err))
-  end
-  return server
-end
-
-function M.start_server(opts)
-  assert(type(opts.socket_path) == "string", "socket_path required")
-  assert(type(opts.token) == "string", "token required")
-  assert(type(opts.on_attach) == "function", "on_attach required")
-  assert(type(opts.on_error) == "function", "on_error required")
-  local server = bind_listen(opts.socket_path, opts)
-  local closed = false
-  return {
-    close = function()
-      if closed then return end
-      closed = true
-      if not server:is_closing() then
-        server:close()
-      end
-      pcall(os.remove, opts.socket_path)
-    end,
-  }
-end
 
 local function rename_buffer(bufnr, name)
   pcall(vim.api.nvim_buf_set_name, bufnr, name)
@@ -103,8 +9,6 @@ end
 local function set_buffer_options(bufnr)
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].swapfile = false
-  -- nvim_open_term sets buftype=terminal but leaves filetype empty; icon
-  -- plugins (nvim-web-devicons, mini.icons, bufferline) key off filetype.
   vim.bo[bufnr].filetype = "terminal"
 end
 
@@ -126,50 +30,39 @@ function M.create_buffer(name)
   }
 end
 
-function M.attach(handle, client)
-  handle._attached = true
-  handle.client = client
-  handle._pending_writes = 0
+--- Wire a buffer handle to a gateway-managed tmux pane.
+--- @param handle table  buffer handle returned by create_buffer + extras
+--- @param gateway table the persistent_term.gateway instance
+--- @param pane_id string tmux pane id (e.g. "%1")
+--- @param window_id string tmux window id (e.g. "@1")
+function M.attach(handle, gateway, pane_id, window_id)
+  handle.gateway = gateway
+  handle.pane_id = pane_id
+  handle.window_id = window_id
 
-  -- Pane -> buffer.
-  client:read_start(function(err, data)
-    if err then
-      vim.schedule(function()
-        M.detach(handle, "socket read: " .. err)
-      end)
+  gateway:subscribe(pane_id, window_id, function(bytes)
+    if handle._closing then
       return
     end
-    if not data then
-      vim.schedule(function()
-        M.detach(handle, "socket eof")
-      end)
-      return
+    if vim.api.nvim_buf_is_valid(handle.bufnr) then
+      vim.api.nvim_chan_send(handle.chan, bytes)
     end
+  end, function()
     vim.schedule(function()
-      if vim.api.nvim_buf_is_valid(handle.bufnr) then
-        vim.api.nvim_chan_send(handle.chan, data)
-      end
+      M.detach(handle, "tmux window closed")
     end)
   end)
 
-  -- Buffer -> pane. Wire the per-buffer handle's on_input now.
   local function on_input(_event, _term, _bnr, data)
-    if handle._closing or not client or client:is_closing() then return end
-    if handle._pending_writes > 64 * 1024 then
-      require("persistent_term.log").warn(
-        "persistent-term: input queue full for " .. (handle.name or "?") .. "; dropping keystroke"
-      )
+    if handle._closing then
       return
     end
-    handle._pending_writes = handle._pending_writes + #data
-    client:write(data, function(werr)
-      handle._pending_writes = math.max(0, handle._pending_writes - #data)
-      if werr then
-        vim.schedule(function()
-          M.detach(handle, "socket write: " .. werr)
-        end)
-      end
-    end)
+    local codec = require("persistent_term.codec")
+    local cleaned = codec.is_libvterm_response(data)
+    if cleaned == "" then
+      return
+    end
+    gateway:send_keys(pane_id, cleaned)
   end
 
   if handle._on_input_holder then
@@ -179,14 +72,12 @@ function M.attach(handle, client)
 end
 
 function M.detach(handle, reason)
-  if handle._closing then return end
-  handle._closing = true
-  if handle.client and not handle.client:is_closing() then
-    handle.client:close()
+  if handle._closing then
+    return
   end
-  if handle._server and type(handle._server.close) == "function" then
-    pcall(handle._server.close, handle._server)
-    handle._server = nil
+  handle._closing = true
+  if handle.gateway and handle.pane_id then
+    handle.gateway:unsubscribe(handle.pane_id)
   end
   if handle._resize_timer and not handle._resize_timer:is_closing() then
     handle._resize_timer:stop()
@@ -200,9 +91,7 @@ function M.detach(handle, reason)
     rename_buffer(handle.bufnr, "pterm://" .. (handle.name or "?") .. " [detached]")
   end
   if reason then
-    require("persistent_term.log").warn(
-      "persistent-term: bridge detached: " .. reason
-    )
+    require("persistent_term.log").warn("persistent-term: bridge detached: " .. reason)
   end
 end
 
@@ -219,27 +108,28 @@ function M.resize_to(handle, cols, rows)
   handle._resize_timer = timer
   timer:start(RESIZE_DEBOUNCE_MS, 0, function()
     vim.schedule(function()
-      if not handle._pending_size then return end
+      if not handle._pending_size then
+        return
+      end
       local size = handle._pending_size
       handle._pending_size = nil
-      if not handle.pane_id then return end
-      local tmux = require("persistent_term.tmux")
-      -- Use resize-window when a window_id is available so that single-pane
-      -- windows (where resize-pane is constrained by the window size) also
-      -- get resized correctly.
-      local argv
-      if handle.window_id then
-        argv = tmux.builders.resize_window(handle.window_id, size.cols, size.rows)
+      if not handle.gateway or not handle.window_id then
+        return
+      end
+      local cmd
+      local v = handle.gateway:version() or "3.0"
+      if v:match("^3%.[4-9]") or v:match("^[4-9]") then
+        cmd = string.format("refresh-client -C %s:%dx%d", handle.window_id, size.cols, size.rows)
       else
-        argv = tmux.builders.resize_pane(handle.pane_id, size.cols, size.rows)
+        cmd = string.format("resize-window -t %s -x %d -y %d", handle.window_id, size.cols, size.rows)
       end
-      local res = tmux.run(argv)
-      if not res.ok then
-        require("persistent_term.log").warn(
-          string.format("resize failed for %s: %s",
-            handle.window_id or handle.pane_id, res.stderr)
-        )
-      end
+      handle.gateway:send_cmd(cmd, function(r)
+        if not r.ok then
+          require("persistent_term.log").warn(
+            string.format("resize failed for %s: %s", handle.window_id, r.stderr or "?")
+          )
+        end
+      end)
     end)
     if not timer:is_closing() then
       timer:close()
@@ -251,14 +141,12 @@ function M.resize_to(handle, cols, rows)
 end
 
 function M.kill(handle)
-  if handle.pane_id then
-    local tmux = require("persistent_term.tmux")
-    local res = tmux.run(tmux.builders.kill_pane(handle.pane_id))
-    if not res.ok then
-      require("persistent_term.log").warn(
-        "kill-pane failed for " .. handle.pane_id .. ": " .. res.stderr
-      )
-    end
+  if handle.gateway and handle.window_id then
+    handle.gateway:send_cmd("kill-window -t " .. handle.window_id, function(r)
+      if not r.ok then
+        require("persistent_term.log").warn("kill-window failed for " .. handle.window_id .. ": " .. (r.stderr or "?"))
+      end
+    end)
   end
   M.detach(handle, "kill")
   if vim.api.nvim_buf_is_valid(handle.bufnr) then
@@ -272,8 +160,12 @@ local function buf_size_for(bufnr)
     if vim.api.nvim_win_get_buf(win) == bufnr then
       local w = vim.api.nvim_win_get_width(win)
       local h = vim.api.nvim_win_get_height(win)
-      if not cols or w < cols then cols = w end
-      if not rows or h < rows then rows = h end
+      if not cols or w < cols then
+        cols = w
+      end
+      if not rows or h < rows then
+        rows = h
+      end
     end
   end
   return cols, rows
@@ -295,7 +187,9 @@ function M.install_buffer_hook(handle)
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
     group = group,
     callback = function()
-      if handle._closing then return end
+      if handle._closing then
+        return
+      end
       local cols, rows = buf_size_for(handle.bufnr)
       if cols and rows then
         M.resize_to(handle, cols, rows)
@@ -305,8 +199,12 @@ function M.install_buffer_hook(handle)
 end
 
 function M.chan_send_history(handle, data)
-  if data == nil or data == "" then return end
-  if not vim.api.nvim_buf_is_valid(handle.bufnr) then return end
+  if data == nil or data == "" then
+    return
+  end
+  if not vim.api.nvim_buf_is_valid(handle.bufnr) then
+    return
+  end
   vim.api.nvim_chan_send(handle.chan, data)
 end
 
