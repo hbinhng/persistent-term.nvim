@@ -1,4 +1,4 @@
-.PHONY: build test lint clean deps go-build go-test go-lint lua-test lua-lint
+.PHONY: build test lint clean deps go-build go-test go-lint lua-test lua-lint release
 
 ROOT := $(shell pwd)
 GO_BIN := $(ROOT)/go/bin/persistent-term-pipe
@@ -34,3 +34,14 @@ build: go-build
 test: go-build go-test lua-test
 
 lint: go-lint lua-lint
+
+release:
+	mkdir -p dist
+	@for combo in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do \
+		os=$${combo%/*}; arch=$${combo#*/}; \
+		out="dist/persistent-term-pipe-$$os-$$arch"; \
+		echo "building $$out"; \
+		(cd go && GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -o ../$$out .); \
+		sha256sum $$out | awk '{print $$1}' > $$out.sha256; \
+	done
+	@ls -la dist/
