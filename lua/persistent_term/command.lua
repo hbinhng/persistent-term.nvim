@@ -16,7 +16,9 @@ local function split_tokens(s)
     while i <= len and s:sub(i, i):match("%s") do
       i = i + 1
     end
-    if i > len then break end
+    if i > len then
+      break
+    end
     local tok = ""
     -- collect token (may contain quoted sections)
     while i <= len and not s:sub(i, i):match("%s") do
@@ -111,30 +113,15 @@ function M.parse_open_args(raw)
   return { name = name, argv = argv }
 end
 
-local function dir_for_socket()
-  local xdg = vim.env.XDG_RUNTIME_DIR
-  if xdg and xdg ~= "" then
-    return xdg .. "/persistent-term"
+function M.resolve_shell()
+  local shell = vim.env.SHELL
+  if shell and shell ~= "" and vim.fn.executable(shell) == 1 then
+    return shell
   end
-  return "/tmp/persistent-term-" .. vim.fn.getpid()
-end
-
-local function ensure_runtime_dir(dir)
-  vim.fn.mkdir(dir, "p", "0700")
-end
-
-local function random_hex(nbytes)
-  local uv = vim.uv or vim.loop
-  local raw = uv.random and uv.random(nbytes) or nil
-  if not raw then
-    math.randomseed(os.time())
-    local t = {}
-    for _ = 1, nbytes do
-      table.insert(t, string.char(math.random(0, 255)))
-    end
-    raw = table.concat(t)
+  if vim.fn.executable("/bin/sh") == 1 then
+    return "/bin/sh"
   end
-  return (raw:gsub(".", function(c) return string.format("%02x", string.byte(c)) end))
+  error(string.format("no usable shell: $SHELL=%q, /bin/sh missing", shell or ""), 0)
 end
 
 local function buf_size(bufnr)
@@ -146,27 +133,8 @@ local function buf_size(bufnr)
   return vim.o.columns, math.max(vim.o.lines - 2, 5)
 end
 
-local function name_in_use(rows, name)
-  for _, row in ipairs(rows) do
-    if row.name == name then
-      return row.pane_id
-    end
-  end
-  return nil
-end
-
-function M.resolve_shell()
-  local shell = vim.env.SHELL
-  if shell and shell ~= "" and vim.fn.executable(shell) == 1 then
-    return shell
-  end
-  if vim.fn.executable("/bin/sh") == 1 then
-    return "/bin/sh"
-  end
-  error(string.format(
-    "no usable shell: $SHELL=%q, /bin/sh missing",
-    shell or ""
-  ), 0)
+local function gateway()
+  return require("persistent_term.gateway").singleton()
 end
 
 function M.cmd_open(raw)
@@ -183,177 +151,62 @@ function M.cmd_open(raw)
     parsed.argv = { shell }
   end
 
-  local tmux = require("persistent_term.tmux")
-  local install = require("persistent_term.install")
+  local gw = gateway()
+  local ok, err = gw:ensure_started(5000)
+  if not ok then
+    return nil, err
+  end
+
+  if gw:get_pane_by_name(parsed.name) then
+    return nil, string.format('terminal "%s" already exists', parsed.name)
+  end
+
   local bridge = require("persistent_term.bridge")
-  local log = require("persistent_term.log")
-
-  local v = tmux.check_version("3.0")
-  if not v.ok then
-    log.error(v.reason)
-    return nil, v.reason
-  end
-  if not install.is_installed() then
-    local msg = "helper binary not installed; run :PTermInstall"
-    log.error(msg)
-    return nil, msg
-  end
-
-  local function run_bootstrap()
-    local b = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
-    if not b.ok then
-      return b, "tmux set-option default-terminal failed: " .. b.stderr
-    end
-    if tmux.version_at_least(v.version, "3.2") then
-      b = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
-      if not b.ok then
-        return b, "tmux set-option terminal-features failed: " .. b.stderr
-      end
-    end
-    b = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
-    if not b.ok then
-      return b, "tmux set-environment COLORTERM failed: " .. b.stderr
-    end
-    return nil
-  end
-
-  local boot_result, boot_err_msg = run_bootstrap()
-  -- If the bootstrap failed because no server exists yet, we need to start the
-  -- server first so we can apply default-terminal BEFORE creating the real
-  -- session.  Tmux overwrites the child's TERM from default-terminal at session
-  -- create time, so the option must be present on the server before new-session.
-  if boot_result ~= nil then
-    if tmux.is_no_server(boot_result) then
-      -- The init session runs `sleep 30` (not `sleep 1`): it must outlive
-      -- this function so the server stays alive until our real new-session
-      -- registers the pterm session. 30s is far more than the ~25ms typical
-      -- gap; if the real new-session fails, the ghost dies on its own.
-      local init = tmux.run(tmux.builders.new_session({
-        session_name = "pterm_init_" .. random_hex(4),
-        cols = 80,
-        rows = 24,
-        cwd = vim.fn.getcwd(),
-        argv = { "sleep", "30" },
-      }))
-      if not init.ok then
-        return nil, "tmux new-session (server init) failed: " .. init.stderr
-      end
-      -- Server is now up; apply the bootstrap options.
-      local _, post_err = run_bootstrap()
-      if post_err then
-        return nil, "after server init: " .. post_err
-      end
-    else
-      return nil, boot_err_msg
-    end
-  end
-
-  local list = tmux.run(tmux.builders.list_panes())
-  -- A fresh tmux server (no sessions yet) causes list-panes -a to fail with
-  -- "No such file or directory" or "no server running". Treat that as an empty
-  -- pane list rather than a hard error so :PTerm works on first use.
-  local rows
-  if tmux.is_no_server(list) then
-    rows = {}
-  elseif not list.ok then
-    return nil, "tmux list-panes failed: " .. list.stderr
-  else
-    rows = tmux.parse_list_panes(list.stdout)
-  end
-  local existing_pid = name_in_use(rows, parsed.name)
-  if existing_pid then
-    return nil, string.format('terminal "%s" already exists (pane %s)', parsed.name, existing_pid)
-  end
-
-  local dir = dir_for_socket()
-  ensure_runtime_dir(dir)
-  local socket_path = dir .. "/" .. random_hex(16) .. ".sock"
-  local token = random_hex(32)
-
+  local codec = require("persistent_term.codec")
   local buf = bridge.create_buffer(parsed.name)
   local cols, rows = buf_size(buf.bufnr)
 
   local handle = {
-    bufnr = buf.bufnr, chan = buf.chan,
+    bufnr = buf.bufnr,
+    chan = buf.chan,
     name = parsed.name,
     _on_input_holder = buf._on_input_holder,
-    _on_detach = function() end,
   }
 
-  local server
-  server = bridge.start_server({
-    socket_path = socket_path,
-    token = token,
-    on_attach = function(client)
-      handle._attached = true
-      bridge.attach(handle, client)
-    end,
-    on_error = function(reason)
-      log.warn("bridge: " .. reason)
-    end,
-  })
-  handle._server = server
+  -- Build the argv portion: each token shell-escaped.
+  local argv_parts = {}
+  for _, a in ipairs(parsed.argv) do
+    table.insert(argv_parts, codec.shell_escape(a))
+  end
+  local cmd = string.format("new-window -d -P -F '#{pane_id}\t#{window_id}' -- %s", table.concat(argv_parts, " "))
 
-  -- Handshake watchdog: if the helper does not connect+AUTH within 2s,
-  -- tear down the partial state.
-  vim.defer_fn(function()
-    if handle._attached or handle._closing then return end
-    log.error(string.format('handshake timeout for "%s"; rolling back', parsed.name))
-    if handle.pane_id then
-      tmux.run(tmux.builders.kill_pane(handle.pane_id))
+  gw:send_cmd(cmd, function(r)
+    if not r.ok then
+      handle._open_err = "tmux new-window failed: " .. (r.stderr or "")
+      pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
+      return
     end
-    bridge.detach(handle, "handshake timeout")
-    if vim.api.nvim_buf_is_valid(handle.bufnr) then
-      vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+    local tmux = require("persistent_term.tmux")
+    local ids = tmux.parse_id_tuple(r.stdout)
+    if not ids then
+      handle._open_err = "tmux returned unparseable ids: " .. r.stdout
+      pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
+      return
     end
-  end, 2000)
+    handle.pane_id = ids.pane_id
+    handle.window_id = ids.window_id
+    bridge.attach(handle, gw, ids.pane_id, ids.window_id)
+    gw:register_pane(parsed.name, ids.pane_id, ids.window_id)
+    vim.b[buf.bufnr].persistent_term_pane_id = ids.pane_id
+    vim.b[buf.bufnr].persistent_term_window_id = ids.window_id
 
-  local new = tmux.run(tmux.builders.new_session({
-    session_name = "pterm_" .. random_hex(4) .. "_" .. parsed.name,
-    cols = cols,
-    rows = rows,
-    cwd = vim.fn.getcwd(),
-    argv = parsed.argv,
-  }))
-  if not new.ok then
-    handle._closing = true
-    server:close()
-    pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
-    return nil, "tmux new-session failed: " .. new.stderr
-  end
+    gw:send_cmd(string.format("set-option -wt %s @pterm_name %s", ids.window_id, parsed.name), function() end)
+    gw:send_cmd(string.format("set-option -wt %s remain-on-exit on", ids.window_id), function() end)
+    -- Initial resize.
+    bridge.resize_to(handle, cols, rows)
+    bridge.install_buffer_hook(handle)
+  end)
 
-  local ids = tmux.parse_new_session_output(new.stdout)
-  if not ids then
-    handle._closing = true
-    server:close()
-    pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
-    return nil, "tmux returned unparseable ids: " .. new.stdout
-  end
-  handle.pane_id = ids.pane_id
-  handle.session_id = ids.session_id
-  handle.window_id = ids.window_id
-  vim.b[buf.bufnr].persistent_term_pane_id = ids.pane_id
-  vim.b[buf.bufnr].persistent_term_session_id = ids.session_id
-
-  tmux.run(tmux.builders.set_window_option(ids.window_id, "remain-on-exit", "on"))
-  tmux.run(tmux.builders.set_pane_option(ids.pane_id, "@pterm_name", parsed.name))
-
-  local helper = install.binary_path()
-  local pipe = tmux.run(tmux.builders.pipe_pane({
-    pane_id = ids.pane_id,
-    bin_path = helper,
-    socket_path = socket_path,
-    token = token,
-  }))
-  if not pipe.ok then
-    handle._closing = true
-    tmux.run(tmux.builders.kill_pane(ids.pane_id))
-    server:close()
-    pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
-    return nil, "tmux pipe-pane failed: " .. pipe.stderr
-  end
-
-  bridge.install_buffer_hook(handle)
   return handle
 end
 
@@ -395,11 +248,15 @@ end
 local function find_pane(rows, target)
   if target:match(PANE_ID_PATTERN) then
     for _, r in ipairs(rows) do
-      if r.pane_id == target then return r end
+      if r.pane_id == target then
+        return r
+      end
     end
   else
     for _, r in ipairs(rows) do
-      if r.name == target then return r end
+      if r.name == target then
+        return r
+      end
     end
   end
   return nil
@@ -415,7 +272,9 @@ function M.cmd_attach(target)
   local log = require("persistent_term.log")
 
   local v = tmux.check_version("3.0")
-  if not v.ok then return nil, v.reason end
+  if not v.ok then
+    return nil, v.reason
+  end
   if not install.is_installed() then
     return nil, "helper binary not installed; run :PTermInstall"
   end
@@ -449,14 +308,43 @@ function M.cmd_attach(target)
     end
   end
 
+  local dir_for_socket = function()
+    local xdg = vim.env.XDG_RUNTIME_DIR
+    if xdg and xdg ~= "" then
+      return xdg .. "/persistent-term"
+    end
+    return "/tmp/persistent-term-" .. vim.fn.getpid()
+  end
+  local ensure_runtime_dir = function(dir)
+    vim.fn.mkdir(dir, "p", "0700")
+  end
+  local random_hex = function(nbytes)
+    local uv = vim.uv or vim.loop
+    local raw = uv.random and uv.random(nbytes) or nil
+    if not raw then
+      math.randomseed(os.time())
+      local t = {}
+      for _ = 1, nbytes do
+        table.insert(t, string.char(math.random(0, 255)))
+      end
+      raw = table.concat(t)
+    end
+    return (raw:gsub(".", function(c)
+      return string.format("%02x", string.byte(c))
+    end))
+  end
+
   local dir = dir_for_socket()
   ensure_runtime_dir(dir)
   local socket_path = dir .. "/" .. random_hex(16) .. ".sock"
   local token = random_hex(32)
   local buf = bridge.create_buffer(name)
   local handle = {
-    bufnr = buf.bufnr, chan = buf.chan,
-    name = name, pane_id = pane_id, window_id = window_id,
+    bufnr = buf.bufnr,
+    chan = buf.chan,
+    name = name,
+    pane_id = pane_id,
+    window_id = window_id,
     _on_input_holder = buf._on_input_holder,
   }
 
@@ -481,8 +369,10 @@ function M.cmd_attach(target)
   handle._server = server
 
   vim.defer_fn(function()
-    if handle._attached or handle._closing then return end
-    log.error(string.format('handshake timeout while attaching to %s', pane_id))
+    if handle._attached or handle._closing then
+      return
+    end
+    log.error(string.format("handshake timeout while attaching to %s", pane_id))
     bridge.detach(handle, "handshake timeout")
     if vim.api.nvim_buf_is_valid(handle.bufnr) then
       vim.api.nvim_buf_delete(handle.bufnr, { force = true })
@@ -541,18 +431,20 @@ function M.list()
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     local bname = vim.api.nvim_buf_get_name(bufnr)
     local match = bname:match("^pterm://([^%s]+)$")
-    if match then attached[match] = true end
+    if match then
+      attached[match] = true
+    end
   end
 
   local out = {}
   for _, row in ipairs(rows) do
     if row.name and row.name ~= "" then
       table.insert(out, {
-        name      = row.name,
-        pane_id   = row.pane_id,
+        name = row.name,
+        pane_id = row.pane_id,
         window_id = row.window_id,
-        attached  = attached[row.name] == true,
-        status    = row.dead and "dead" or "live",
+        attached = attached[row.name] == true,
+        status = row.dead and "dead" or "live",
       })
     end
   end
@@ -578,7 +470,9 @@ function M.cmd_list()
   local widths = { #headers[1], #headers[2], #headers[3], #headers[4] }
   for _, d in ipairs(data) do
     for i = 1, 4 do
-      if #d[i] > widths[i] then widths[i] = #d[i] end
+      if #d[i] > widths[i] then
+        widths[i] = #d[i]
+      end
     end
   end
   local function fmt_row(cells)
@@ -589,7 +483,9 @@ function M.cmd_list()
     return table.concat(parts, "  ")
   end
   local lines = { fmt_row(headers) }
-  for _, d in ipairs(data) do table.insert(lines, fmt_row(d)) end
+  for _, d in ipairs(data) do
+    table.insert(lines, fmt_row(d))
+  end
   vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
 end
 

@@ -135,6 +135,7 @@ function Gateway:_handle_line(line)
         self._subs[pane_id] = nil
       end
     end
+    self:forget_pane_by_window(wid)
     return
   end
 
@@ -248,6 +249,107 @@ function Gateway:_run_bootstrap()
       table.insert(self_ref._pending, { cmd = "<deferred-terminal-features>", cb = function() end })
     end
   end)
+end
+
+function Gateway:ensure_started(timeout_ms)
+  if self._state == "ready" then
+    return true, nil
+  end
+  if self._state == "stopped" then
+    self:start()
+  end
+  local ok = vim.wait(timeout_ms or 5000, function()
+    return self._state == "ready"
+  end, 20)
+  if not ok then
+    return nil, "tmux -CC startup timeout (state=" .. self._state .. ")"
+  end
+  return true, nil
+end
+
+function Gateway:register_pane(name, pane_id, window_id)
+  self._panes_by_name = self._panes_by_name or {}
+  self._panes_by_name[name] = { pane_id = pane_id, window_id = window_id }
+end
+
+function Gateway:get_pane_by_name(name)
+  return (self._panes_by_name or {})[name]
+end
+
+function Gateway:forget_pane_by_window(window_id)
+  if not self._panes_by_name then
+    return
+  end
+  for n, e in pairs(self._panes_by_name) do
+    if e.window_id == window_id then
+      self._panes_by_name[n] = nil
+    end
+  end
+end
+
+local _singleton
+
+function M.singleton()
+  if not _singleton then
+    local transport = M._make_vim_system_transport()
+    _singleton = M.new({ transport = transport })
+  end
+  return _singleton
+end
+
+function M._reset_singleton_for_test()
+  if _singleton and _singleton._transport and _singleton._transport.kill then
+    pcall(_singleton._transport.kill)
+  end
+  _singleton = nil
+end
+
+-- Default production transport. Spawns `tmux -L persistent-term -CC
+-- new-session -A -s pterm -x 80 -y 24` and bridges stdin/stdout/stderr.
+function M._make_vim_system_transport()
+  local handle
+  return {
+    start = function(on_stdout, on_stderr, on_exit)
+      handle = vim.system(
+        { "tmux", "-L", "persistent-term", "-CC", "new-session", "-A", "-s", "pterm", "-x", "80", "-y", "24" },
+        {
+          stdin = true,
+          text = true,
+          stdout = function(_, chunk)
+            if chunk then
+              vim.schedule(function()
+                on_stdout(chunk)
+              end)
+            end
+          end,
+          stderr = function(_, chunk)
+            if chunk then
+              vim.schedule(function()
+                on_stderr(chunk)
+              end)
+            end
+          end,
+        },
+        function(obj)
+          vim.schedule(function()
+            on_exit(obj.code, obj.signal)
+          end)
+        end
+      )
+      return handle ~= nil, handle == nil and "vim.system failed" or nil
+    end,
+    write = function(bytes)
+      if handle and handle.write then
+        handle:write(bytes)
+      end
+      return true
+    end,
+    kill = function()
+      if handle and handle.kill then
+        pcall(handle.kill, handle, 15)
+      end
+    end,
+  }
 end
 
 return M
