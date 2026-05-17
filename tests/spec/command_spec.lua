@@ -187,7 +187,7 @@ describe("persistent_term.command.cmd_open", function()
     assert.is_truthy(handle)
 
     -- The first three tmux invocations are the bootstrap, in this exact order.
-    assert.is_true(#calls >= 3, "expected at least 3 tmux calls; got " .. #calls)
+    assert.is_true(#calls >= 4, "expected at least 4 tmux calls; got " .. #calls)
     assert.same(
       { "tmux", "-L", "persistent-term", "set-option", "-g", "default-terminal", "xterm-256color" },
       calls[1]
