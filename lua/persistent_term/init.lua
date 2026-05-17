@@ -32,13 +32,6 @@ function M.kill()
   end
 end
 
-function M.install()
-  local ok, err = require("persistent_term.install").run_install()
-  if not ok then
-    require("persistent_term.log").error(err)
-  end
-end
-
 function M.complete_attach(arg_lead, cmd_line, cursor_pos)
   return require("persistent_term.command").complete_attach(arg_lead, cmd_line, cursor_pos)
 end
