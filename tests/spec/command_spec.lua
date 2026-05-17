@@ -335,6 +335,10 @@ describe("persistent_term.command.resolve_shell", function()
     local ok, err = pcall(command.resolve_shell)
     assert.is_false(ok)
     assert.is_truthy(tostring(err):match("no usable shell"))
+    -- error(msg, 0) suppresses the file:line: prefix so callers can
+    -- forward the message verbatim without string surgery.
+    assert.is_nil(tostring(err):match("command%.lua:%d+:"))
+    assert.is_truthy(tostring(err):match('^no usable shell: %$SHELL="/missing/shell", /bin/sh missing$'))
   end)
 end)
 

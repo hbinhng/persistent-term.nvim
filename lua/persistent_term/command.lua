@@ -155,7 +155,7 @@ function M.resolve_shell()
   error(string.format(
     "no usable shell: $SHELL=%q, /bin/sh missing",
     shell or ""
-  ))
+  ), 0)
 end
 
 function M.cmd_open(raw)
