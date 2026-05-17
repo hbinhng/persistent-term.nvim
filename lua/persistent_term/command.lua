@@ -3,8 +3,10 @@ local M = {}
 
 local NAME_PATTERN = "^[A-Za-z0-9_.-]+$"
 
---- Split a string into tokens, treating double-quoted substrings as single tokens.
---- Only splits on whitespace outside of quotes.
+--- Split a string into tokens, honoring shell-like quoting.
+--- Splits on whitespace outside of quotes; quote pairs are stripped from the
+--- resulting token value so that  bash -c 'echo hi'  or  bash -c "echo hi"
+--- each produce the argv element  echo hi  (one element, no quote chars).
 local function split_tokens(s)
   local out = {}
   local i = 1
@@ -19,17 +21,17 @@ local function split_tokens(s)
     -- collect token (may contain quoted sections)
     while i <= len and not s:sub(i, i):match("%s") do
       local c = s:sub(i, i)
-      if c == '"' then
-        -- collect until closing quote (or end of string)
-        tok = tok .. c
+      if c == '"' or c == "'" then
+        -- Quoted section: strip the surrounding quote characters and keep
+        -- the content as a single unbroken piece of the token.
+        local q = c
         i = i + 1
-        while i <= len and s:sub(i, i) ~= '"' do
+        while i <= len and s:sub(i, i) ~= q do
           tok = tok .. s:sub(i, i)
           i = i + 1
         end
         if i <= len then
-          tok = tok .. s:sub(i, i) -- closing quote
-          i = i + 1
+          i = i + 1 -- skip closing quote
         end
       else
         tok = tok .. c
@@ -62,8 +64,9 @@ function M.parse_open_args(raw)
         return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. name_part
       end
       local name = name_tokens[1]
-      if #name > 64 or not name:match(NAME_PATTERN) then
-        return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. name
+      local raw_name_trail = vim.trim(name_part)
+      if raw_name_trail ~= name or #name > 64 or not name:match(NAME_PATTERN) then
+        return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. raw_name_trail
       end
       return nil, "empty command after --"
     end
@@ -73,14 +76,19 @@ function M.parse_open_args(raw)
   local name_part = raw:sub(1, sep_pos - 1)
   local cmd_part = raw:sub(sep_pos + 4) -- skip " -- "
 
-  -- Validate name part: must be exactly one valid token
+  -- Validate name part: must be exactly one valid token.
+  -- We check the raw name_part directly (no quote-stripping) so that names
+  -- containing quote characters like  dev'  are correctly rejected.
   local name_tokens = split_tokens(name_part)
   if #name_tokens ~= 1 then
     return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. name_part
   end
   local name = name_tokens[1]
-  if #name > 64 or not name:match(NAME_PATTERN) then
-    return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. name
+  -- Re-validate against the raw trimmed name_part to catch quote chars that
+  -- split_tokens would otherwise strip (e.g. "dev'" → token "dev" but raw has "'").
+  local raw_name = vim.trim(name_part)
+  if raw_name ~= name or #name > 64 or not name:match(NAME_PATTERN) then
+    return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. raw_name
   end
 
   -- Parse argv from cmd_part
@@ -159,10 +167,19 @@ function M.cmd_open(raw)
   end
 
   local list = tmux.run(tmux.builders.list_panes())
-  if not list.ok then
+  -- A fresh tmux server (no sessions yet) causes list-panes -a to fail with
+  -- "No such file or directory" or "no server running". Treat that as an empty
+  -- pane list rather than a hard error so :PTerm works on first use.
+  local no_server = not list.ok
+    and (list.stderr:find("No such file or directory", 1, true)
+      or list.stderr:find("no server running", 1, true))
+  if not list.ok and not no_server then
     return nil, "tmux list-panes failed: " .. list.stderr
   end
-  local existing_pid = name_in_use(tmux.parse_list_panes(list.stdout), parsed.name)
+  local existing_pid = name_in_use(
+    no_server and {} or tmux.parse_list_panes(list.stdout),
+    parsed.name
+  )
   if existing_pid then
     return nil, string.format('terminal "%s" already exists (pane %s)', parsed.name, existing_pid)
   end

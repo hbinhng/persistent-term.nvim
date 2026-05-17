@@ -81,6 +81,15 @@ function M.builders.resize_pane(pane_id, cols, rows)
   return argv
 end
 
+function M.builders.resize_window(window_id, cols, rows)
+  local argv = copy(SOCKET)
+  vim.list_extend(argv, {
+    "resize-window", "-t", window_id,
+    "-x", tostring(cols), "-y", tostring(rows),
+  })
+  return argv
+end
+
 function M.builders.set_pane_option(pane_id, key, value)
   local argv = copy(SOCKET)
   vim.list_extend(argv, { "set-option", "-p", "-t", pane_id, key, value })

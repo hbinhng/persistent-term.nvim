@@ -221,11 +221,20 @@ function M.resize_to(handle, cols, rows)
       handle._pending_size = nil
       if not handle.pane_id then return end
       local tmux = require("persistent_term.tmux")
-      local argv = tmux.builders.resize_pane(handle.pane_id, size.cols, size.rows)
+      -- Use resize-window when a window_id is available so that single-pane
+      -- windows (where resize-pane is constrained by the window size) also
+      -- get resized correctly.
+      local argv
+      if handle.window_id then
+        argv = tmux.builders.resize_window(handle.window_id, size.cols, size.rows)
+      else
+        argv = tmux.builders.resize_pane(handle.pane_id, size.cols, size.rows)
+      end
       local res = tmux.run(argv)
       if not res.ok then
         require("persistent_term.log").warn(
-          string.format("resize-pane failed for %s: %s", handle.pane_id, res.stderr)
+          string.format("resize failed for %s: %s",
+            handle.window_id or handle.pane_id, res.stderr)
         )
       end
     end)

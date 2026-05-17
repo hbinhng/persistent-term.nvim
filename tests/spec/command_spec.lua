@@ -43,7 +43,8 @@ describe("persistent_term.command parse_open_args", function()
 
   it("preserves multiple spaces in argv elements", function()
     local r = command.parse_open_args('dev -- sh -c "echo hi"')
-    assert.same({ "sh", "-c", '"echo hi"' }, r.argv)
+    -- Double quotes are stripped; content is kept as one token.
+    assert.same({ "sh", "-c", "echo hi" }, r.argv)
   end)
 end)
 
