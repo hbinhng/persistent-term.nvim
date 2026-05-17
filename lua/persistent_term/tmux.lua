@@ -105,6 +105,12 @@ function M.builders.set_window_option(window_id, key, value)
   return argv
 end
 
+function M.builders.set_server_option(key, value)
+  local argv = copy(SOCKET)
+  vim.list_extend(argv, { "set-option", "-g", key, value })
+  return argv
+end
+
 function M.builders.version_check()
   return { "tmux", "-V" }
 end

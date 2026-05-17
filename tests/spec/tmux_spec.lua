@@ -109,6 +109,13 @@ describe("persistent_term.tmux builders", function()
     }, tmux.builders.set_window_option("@7", "remain-on-exit", "on"))
   end)
 
+  it("set_server_option builds correct argv", function()
+    assert.same({
+      "tmux", "-L", "persistent-term",
+      "set-option", "-g", "default-terminal", "xterm-256color",
+    }, tmux.builders.set_server_option("default-terminal", "xterm-256color"))
+  end)
+
   it("version_check_argv builds correct argv", function()
     assert.same({ "tmux", "-V" }, tmux.builders.version_check())
   end)
