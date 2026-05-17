@@ -200,6 +200,88 @@ describe("persistent-term integration", function()
     assert.is_nil(joined:find("no server running", 1, true),
       "should not propagate 'no server running' to user; got:\n" .. joined)
   end)
+
+  local function capture_notify(thunk)
+    local out = {}
+    local orig = vim.notify
+    vim.notify = function(msg, _l) table.insert(out, msg) end
+    thunk()
+    vim.wait(100, function() return #out > 0 end)
+    vim.notify = orig
+    return table.concat(out, "\n")
+  end
+
+  it("PTermList on a fresh server prints 'no persistent terminals'", function()
+    local out = capture_notify(function() vim.cmd("PTermList") end)
+    assert.is_truthy(out:find("no persistent terminals", 1, true), "got: " .. out)
+  end)
+
+  it("PTermList lists 2 panes with attached=yes", function()
+    vim.cmd([[PTerm l1 -- bash -c 'sleep 1; printf one;   sleep 30']])
+    vim.cmd([[PTerm l2 -- bash -c 'sleep 1; printf two;   sleep 30']])
+    wait_until(function()
+      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+      local seen_l1, seen_l2
+      for line in (res.stdout or ""):gmatch("[^\n]+") do
+        if line == "l1" then seen_l1 = true end
+        if line == "l2" then seen_l2 = true end
+      end
+      return seen_l1 and seen_l2
+    end, 3000)
+
+    local out = capture_notify(function() vim.cmd("PTermList") end)
+    local n = 0
+    for _ in out:gmatch("[^\n]+") do n = n + 1 end
+    assert.equals(3, n, "expected 3 lines (header + 2), got:\n" .. out)
+    assert.is_truthy(out:find("l1", 1, true))
+    assert.is_truthy(out:find("l2", 1, true))
+    local yes_count = 0
+    for _ in out:gmatch("yes") do yes_count = yes_count + 1 end
+    assert.equals(2, yes_count, "expected 2 'yes', got:\n" .. out)
+  end)
+
+  it("PTermList drops the killed pane", function()
+    vim.cmd([[PTerm k1 -- bash -c 'sleep 1; printf one; sleep 30']])
+    vim.cmd([[PTerm k2 -- bash -c 'sleep 1; printf two; sleep 30']])
+    wait_until(function()
+      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+      return (res.stdout or ""):find("k1") and (res.stdout or ""):find("k2")
+    end, 3000)
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      if vim.api.nvim_buf_get_name(b) == "pterm://k1" then
+        vim.api.nvim_set_current_buf(b)
+        break
+      end
+    end
+    vim.cmd("PTermKill")
+    wait_until(function()
+      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+      return not (res.stdout or ""):find("k1", 1, true)
+    end, 3000)
+    local out = capture_notify(function() vim.cmd("PTermList") end)
+    assert.is_nil(out:find("k1", 1, true), "k1 should be gone, got:\n" .. out)
+    assert.is_truthy(out:find("k2", 1, true), "k2 should remain, got:\n" .. out)
+  end)
+
+  it("PTermList marks a dead pane as STATUS=dead", function()
+    vim.cmd([[PTerm dx -- bash -c 'sleep 1; exit 0']])
+    assert.is_truthy(wait_until(function()
+      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF",
+        "#{@pterm_name}\t#{pane_dead}" })
+      for line in (res.stdout or ""):gmatch("[^\n]+") do
+        local n, d = line:match("^(.-)\t(.)$")
+        if n == "dx" and d == "1" then return true end
+      end
+      return false
+    end, 5000))
+    local out = capture_notify(function() vim.cmd("PTermList") end)
+    local dx_line
+    for line in out:gmatch("[^\n]+") do
+      if line:find("dx", 1, true) then dx_line = line; break end
+    end
+    assert.is_truthy(dx_line, "no dx row in:\n" .. out)
+    assert.is_truthy(dx_line:find("dead", 1, true), "dx row missing 'dead': " .. dx_line)
+  end)
 end)
 
 describe("persistent-term crash recovery", function()
