@@ -238,4 +238,64 @@ function M.resize_to(handle, cols, rows)
   end)
 end
 
+function M.kill(handle)
+  if handle.pane_id then
+    local tmux = require("persistent_term.tmux")
+    local res = tmux.run(tmux.builders.kill_pane(handle.pane_id))
+    if not res.ok then
+      require("persistent_term.log").warn(
+        "kill-pane failed for " .. handle.pane_id .. ": " .. res.stderr
+      )
+    end
+  end
+  M.detach(handle, "kill")
+  if vim.api.nvim_buf_is_valid(handle.bufnr) then
+    vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+  end
+end
+
+local function buf_size_for(bufnr)
+  local cols, rows
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      local w = vim.api.nvim_win_get_width(win)
+      local h = vim.api.nvim_win_get_height(win)
+      if not cols or w < cols then cols = w end
+      if not rows or h < rows then rows = h end
+    end
+  end
+  return cols, rows
+end
+
+function M.install_buffer_hook(handle)
+  local group = vim.api.nvim_create_augroup("PersistentTerm_" .. handle.bufnr, { clear = true })
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    group = group,
+    buffer = handle.bufnr,
+    once = true,
+    callback = function()
+      M.detach(handle, "buffer wiped")
+      if handle._on_detach then
+        handle._on_detach()
+      end
+    end,
+  })
+  vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {
+    group = group,
+    callback = function()
+      if handle._closing then return end
+      local cols, rows = buf_size_for(handle.bufnr)
+      if cols and rows then
+        M.resize_to(handle, cols, rows)
+      end
+    end,
+  })
+end
+
+function M.chan_send_history(handle, data)
+  if data == nil or data == "" then return end
+  if not vim.api.nvim_buf_is_valid(handle.bufnr) then return end
+  vim.api.nvim_chan_send(handle.chan, data)
+end
+
 return M

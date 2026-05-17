@@ -276,3 +276,62 @@ describe("persistent_term.bridge resize", function()
     package.loaded["persistent_term.tmux"] = nil
   end)
 end)
+
+describe("persistent_term.bridge kill / wipe", function()
+  local bridge
+
+  before_each(function()
+    package.loaded["persistent_term.bridge"] = nil
+    bridge = require("persistent_term.bridge")
+  end)
+
+  it("kill closes the bridge and wipes the buffer", function()
+    local called = {}
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      run = function(argv)
+        table.insert(called, argv)
+        return { ok = true, code = 0, stdout = "", stderr = "" }
+      end,
+    }
+
+    local buf = bridge.create_buffer("kx")
+    local handle = {
+      bufnr = buf.bufnr, chan = buf.chan,
+      name = "kx", pane_id = "%55",
+      _on_input_holder = buf._on_input_holder,
+    }
+
+    bridge.kill(handle)
+    assert.is_false(vim.api.nvim_buf_is_valid(buf.bufnr))
+    local found_kill = false
+    for _, argv in ipairs(called) do
+      if argv[#argv - 1] == "-t" and argv[#argv] == "%55" then
+        found_kill = true
+      end
+    end
+    assert.is_true(found_kill)
+    package.loaded["persistent_term.tmux"] = nil
+  end)
+
+  it("install_buffer_hook runs detach on BufWipeout", function()
+    local detached = false
+    package.loaded["persistent_term.tmux"] = {
+      builders = require("persistent_term.tmux").builders,
+      run = function() return { ok = true, code = 0, stdout = "", stderr = "" } end,
+    }
+
+    local buf = bridge.create_buffer("hk")
+    local handle = {
+      bufnr = buf.bufnr, chan = buf.chan,
+      name = "hk", pane_id = "%66",
+      _on_input_holder = buf._on_input_holder,
+      _on_detach = function() detached = true end,
+    }
+    bridge.install_buffer_hook(handle)
+
+    vim.api.nvim_buf_delete(buf.bufnr, { force = true })
+    assert.is_true(detached)
+    package.loaded["persistent_term.tmux"] = nil
+  end)
+end)
