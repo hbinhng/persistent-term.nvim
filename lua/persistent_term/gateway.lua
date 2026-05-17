@@ -21,6 +21,8 @@ function M.new(opts)
   self._pending = {} -- FIFO of { cmd, cb }
   self._in_block = false
   self._block_lines = {}
+  -- pane_id -> { on_bytes, on_close, window_id }
+  self._subs = {}
   return self
 end
 
@@ -93,6 +95,29 @@ function Gateway:_handle_line(line)
     return
   end
 
+  -- %output %<pane_id> <octal-escaped payload>
+  local pid, payload = line:match("^%%output (%%%d+) (.*)$")
+  if pid then
+    local sub = self._subs[pid]
+    if sub then
+      local codec = require("persistent_term.codec")
+      sub.on_bytes(codec.decode_output_payload(payload))
+    end
+    return
+  end
+
+  -- %window-close @<wid>
+  local wid = line:match("^%%window%-close (@%d+)$")
+  if wid then
+    for pane_id, sub in pairs(self._subs) do
+      if sub.window_id == wid then
+        pcall(sub.on_close)
+        self._subs[pane_id] = nil
+      end
+    end
+    return
+  end
+
   if self._state == "ready_no_session" and line:match("^%%session%-changed ") then
     self._state = "ready"
     return
@@ -140,6 +165,18 @@ end
 function Gateway:send_cmd(cmd, cb)
   table.insert(self._pending, { cmd = cmd, cb = cb })
   self._transport.write(cmd .. "\n")
+end
+
+function Gateway:subscribe(pane_id, window_id, on_bytes, on_close)
+  self._subs[pane_id] = {
+    window_id = window_id,
+    on_bytes = on_bytes,
+    on_close = on_close,
+  }
+end
+
+function Gateway:unsubscribe(pane_id)
+  self._subs[pane_id] = nil
 end
 
 return M

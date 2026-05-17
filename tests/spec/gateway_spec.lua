@@ -187,3 +187,87 @@ describe("gateway command queue", function()
     assert.equals("@1\t%1\tdev\t0\n@2\t%2\ttest\t0", result.stdout)
   end)
 end)
+
+describe("gateway subscribers", function()
+  local gateway
+  before_each(function()
+    package.loaded["persistent_term.gateway"] = nil
+    gateway = require("persistent_term.gateway")
+  end)
+
+  local function ready_gw(t)
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    return gw
+  end
+
+  it("dispatches %output bytes to the subscribed pane callback", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local received = {}
+    gw:subscribe("%1", "@1", function(bytes)
+      table.insert(received, bytes)
+    end, function() end)
+    t.feed("%output %1 hello\n")
+    assert.same({ "hello" }, received)
+  end)
+
+  it("decodes octal escapes in %output payload before dispatching", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local received
+    gw:subscribe("%1", "@1", function(bytes)
+      received = bytes
+    end, function() end)
+    t.feed("%output %1 \\033[K\n")
+    assert.equals("\27[K", received)
+  end)
+
+  it("drops %output for an unknown pane id without erroring", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    -- No subscriber.
+    assert.has_no.errors(function()
+      t.feed("%output %99 hello\n")
+    end)
+  end)
+
+  it("calls on_close when %window-close arrives for the subscribed window", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local closed = false
+    gw:subscribe("%1", "@1", function() end, function()
+      closed = true
+    end)
+    t.feed("%window-close @1\n")
+    assert.is_true(closed)
+  end)
+
+  it("removes the subscriber after %window-close", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local received = {}
+    gw:subscribe("%1", "@1", function(b)
+      table.insert(received, b)
+    end, function() end)
+    t.feed("%window-close @1\n")
+    t.feed("%output %1 stale\n")
+    assert.same({}, received)
+  end)
+
+  it("supports multiple subscribers across different panes", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local a, b = {}, {}
+    gw:subscribe("%1", "@1", function(x)
+      table.insert(a, x)
+    end, function() end)
+    gw:subscribe("%2", "@2", function(x)
+      table.insert(b, x)
+    end, function() end)
+    t.feed("%output %2 to-b\n%output %1 to-a\n")
+    assert.same({ "to-a" }, a)
+    assert.same({ "to-b" }, b)
+  end)
+end)
