@@ -199,11 +199,11 @@ function M.cmd_open(raw)
     return nil, msg
   end
 
-  tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
+  local boot = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
   if tmux.version_at_least(v.version, "3.2") then
-    tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
+    boot = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
   end
-  tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
+  boot = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
 
   local list = tmux.run(tmux.builders.list_panes())
   -- A fresh tmux server (no sessions yet) causes list-panes -a to fail with
