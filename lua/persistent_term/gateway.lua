@@ -54,6 +54,11 @@ local function on_stdout(self, chunk)
   if chunk == nil or chunk == "" then
     return
   end
+  -- Strip the DCS passthrough prefix that tmux -CC emits at startup when
+  -- running inside a terminal: ESC P <params> p ... ESC \
+  -- The first chunk typically starts with \x1bP1000p; strip up to and
+  -- including the leading 'p' that ends the DCS introducer.
+  chunk = chunk:gsub("^\x1bP%d*p", "")
   self._stdout_buf = self._stdout_buf .. chunk
   while true do
     local nl = self._stdout_buf:find("\n", 1, true)
@@ -61,6 +66,8 @@ local function on_stdout(self, chunk)
       break
     end
     local line = self._stdout_buf:sub(1, nl - 1)
+    -- Strip trailing \r (PTY line endings are CRLF).
+    line = line:gsub("\r$", "")
     self._stdout_buf = self._stdout_buf:sub(nl + 1)
     self:_handle_line(line)
   end
@@ -126,8 +133,8 @@ function Gateway:_handle_line(line)
     return
   end
 
-  -- %window-close @<wid>
-  local wid = line:match("^%%window%-close (@%d+)$")
+  -- %window-close @<wid>  or  %unlinked-window-close @<wid>
+  local wid = line:match("^%%window%-close (@%d+)$") or line:match("^%%unlinked%-window%-close (@%d+)$")
   if wid then
     for pane_id, sub in pairs(self._subs) do
       if sub.window_id == wid then
@@ -331,55 +338,62 @@ function M.singleton()
 end
 
 function M._reset_singleton_for_test()
-  if _singleton and _singleton._transport and _singleton._transport.kill then
-    pcall(_singleton._transport.kill)
+  if _singleton then
+    if _singleton._transport and _singleton._transport.kill then
+      pcall(_singleton._transport.kill)
+    end
+    -- Wait for the underlying job to actually exit so that subsequent tests
+    -- that start a new gateway don't accidentally attach to a stale session.
+    local gw = _singleton
+    vim.wait(2000, function()
+      return gw._state == "stopped"
+    end, 20)
+    _singleton = nil
   end
-  _singleton = nil
 end
 
 -- Default production transport. Spawns `tmux -L persistent-term -CC
--- new-session -A -s pterm -x 80 -y 24` and bridges stdin/stdout/stderr.
+-- new-session -A -s pterm -x 80 -y 24` via jobstart with pty=true so that
+-- tmux -CC gets the PTY it requires (tcgetattr would fail on plain pipes).
 function M._make_vim_system_transport()
-  local handle
+  local job_id
   return {
-    start = function(on_stdout, on_stderr, on_exit)
-      handle = vim.system(
+    start = function(on_stdout, _on_stderr, on_exit)
+      -- pty=true merges stdout+stderr into a single stream delivered via
+      -- on_stdout; on_stderr is not called for PTY jobs.
+      job_id = vim.fn.jobstart(
         { "tmux", "-L", "persistent-term", "-CC", "new-session", "-A", "-s", "pterm", "-x", "80", "-y", "24" },
         {
-          stdin = true,
-          text = true,
-          stdout = function(_, chunk)
-            if chunk then
-              vim.schedule(function()
-                on_stdout(chunk)
-              end)
+          pty = true,
+          on_stdout = function(_, data)
+            -- jobstart delivers lines as a list; re-join with \n so the
+            -- gateway's line-based parser sees a normal stream.
+            local chunk = table.concat(data, "\n")
+            if chunk ~= "" then
+              on_stdout(chunk)
             end
           end,
-          stderr = function(_, chunk)
-            if chunk then
-              vim.schedule(function()
-                on_stderr(chunk)
-              end)
-            end
+          on_exit = function(_, code, _signal)
+            on_exit(code, _signal)
           end,
-        },
-        function(obj)
-          vim.schedule(function()
-            on_exit(obj.code, obj.signal)
-          end)
-        end
+        }
       )
-      return handle ~= nil, handle == nil and "vim.system failed" or nil
+      if job_id <= 0 then
+        job_id = nil
+        return false, "jobstart failed"
+      end
+      return true, nil
     end,
     write = function(bytes)
-      if handle and handle.write then
-        handle:write(bytes)
+      if job_id then
+        vim.fn.chansend(job_id, bytes)
       end
       return true
     end,
     kill = function()
-      if handle and handle.kill then
-        pcall(handle.kill, handle, 15)
+      if job_id then
+        pcall(vim.fn.jobstop, job_id)
+        job_id = nil
       end
     end,
   }

@@ -178,7 +178,8 @@ function M.cmd_open(raw)
   for _, a in ipairs(parsed.argv) do
     table.insert(argv_parts, codec.shell_escape(a))
   end
-  local cmd = string.format("new-window -d -P -F '#{pane_id}\t#{window_id}' -- %s", table.concat(argv_parts, " "))
+  local cmd =
+    string.format("new-window -d -t pterm -P -F '#{pane_id}\t#{window_id}' -- %s", table.concat(argv_parts, " "))
 
   gw:send_cmd(cmd, function(r)
     if not r.ok then
@@ -204,12 +205,26 @@ function M.cmd_open(raw)
     vim.b[buf.bufnr].persistent_term_pane_id = ids.pane_id
     vim.b[buf.bufnr].persistent_term_window_id = ids.window_id
 
-    gw:send_cmd(string.format("set-option -wt %s @pterm_name %s", ids.window_id, parsed.name), function() end)
+    gw:send_cmd(string.format("set-option -wt %s @pterm_name %s", ids.window_id, parsed.name), function()
+      handle._set_option_done = true
+    end)
     gw:send_cmd(string.format("set-option -wt %s remain-on-exit on", ids.window_id), function() end)
     -- Initial resize.
     bridge.resize_to(handle, cols, rows)
     bridge.install_buffer_hook(handle)
   end)
+
+  -- Block until the new-window callback (and set-option) have completed, so
+  -- that callers see a fully-registered pane when cmd_open returns. The
+  -- gateway is async; without this wait, tests that immediately query
+  -- tmux list-panes or the pane map would race the callback.
+  vim.wait(5000, function()
+    return handle.pane_id ~= nil and handle._set_option_done == true
+  end, 20)
+
+  if handle._open_err then
+    return nil, handle._open_err
+  end
 
   return handle
 end
@@ -320,9 +335,14 @@ function M.cmd_kill(bufnr)
   if not name:match("^pterm://") then
     return false, "not a persistent-term buffer"
   end
+  local gw = gateway()
   local window_id = vim.b[bufnr].persistent_term_window_id
   if window_id then
-    gateway():send_cmd("kill-window -t " .. window_id, function() end)
+    gw:send_cmd("kill-window -t " .. window_id, function() end)
+    -- Eagerly remove the pane from the in-memory map so that callers that
+    -- query list() immediately after cmd_kill see a consistent view without
+    -- having to wait for the async %window-close event.
+    gw:forget_pane_by_window(window_id)
   end
   if vim.api.nvim_buf_is_valid(bufnr) then
     pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
@@ -335,6 +355,15 @@ function M.list()
   if gw:state() ~= "ready" then
     return {}
   end
+  -- Refresh the pane map synchronously so that dead-pane status and
+  -- recently-killed panes are reflected accurately.
+  local refreshed = false
+  gw:refresh_pane_map(function()
+    refreshed = true
+  end)
+  vim.wait(2000, function()
+    return refreshed
+  end, 20)
   local rows = gw:all_panes()
   local attached = {}
   for _, b in ipairs(vim.api.nvim_list_bufs()) do
