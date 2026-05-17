@@ -182,14 +182,18 @@ function M.cmd_open(raw)
 
   gw:send_cmd(cmd, function(r)
     if not r.ok then
-      handle._open_err = "tmux new-window failed: " .. (r.stderr or "")
+      local msg = "tmux new-window failed: " .. (r.stderr or "")
+      handle._open_err = msg
+      require("persistent_term.log").error(msg)
       pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
       return
     end
     local tmux = require("persistent_term.tmux")
     local ids = tmux.parse_id_tuple(r.stdout)
     if not ids then
-      handle._open_err = "tmux returned unparseable ids: " .. r.stdout
+      local msg = "tmux returned unparseable ids: " .. r.stdout
+      handle._open_err = msg
+      require("persistent_term.log").error(msg)
       pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
       return
     end

@@ -164,4 +164,25 @@ describe("persistent_term.command cmd_open via gateway", function()
       assert.is_truthy(e and e:find("new%-window"))
     end
   end)
+
+  it("logs an error when new-window fails", function()
+    local errors = {}
+    package.loaded["persistent_term.log"] = {
+      error = function(msg)
+        table.insert(errors, msg)
+      end,
+      warn = function() end,
+      info = function() end,
+      debug = function() end,
+    }
+    -- Reload command after replacing the log module so the fake is picked up.
+    package.loaded["persistent_term.command"] = nil
+    local cmd = require("persistent_term.command")
+    cmd.cmd_open("dev -- echo hi")
+    assert.is_truthy(fake_gw.pending[1])
+    reply(1, false, "no current client")
+    assert.equals(1, #errors)
+    assert.is_truthy(errors[1]:find("new%-window failed"))
+    assert.is_truthy(errors[1]:find("no current client"))
+  end)
 end)
