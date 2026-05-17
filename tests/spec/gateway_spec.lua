@@ -108,3 +108,82 @@ describe("gateway state machine", function()
     assert.is_truthy(logged[1]:find("something went wrong"))
   end)
 end)
+
+describe("gateway command queue", function()
+  local gateway
+  before_each(function()
+    package.loaded["persistent_term.gateway"] = nil
+    gateway = require("persistent_term.gateway")
+  end)
+
+  local function ready_gw(t)
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    return gw
+  end
+
+  it("writes a command to the transport with trailing newline", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    gw:send_cmd("display-message -p '#{version}'", function() end)
+    -- Find the command line we wrote (after the empty initial state).
+    local last = t.written[#t.written]
+    assert.equals("display-message -p '#{version}'\n", last)
+  end)
+
+  it("fires the callback with the response body on %end", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local result
+    gw:send_cmd("display-message -p '#{version}'", function(r)
+      result = r
+    end)
+    t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n")
+    assert.is_table(result)
+    assert.is_true(result.ok)
+    assert.equals("3.4", result.stdout)
+  end)
+
+  it("fires the callback with an error on %error", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local result
+    gw:send_cmd("kill-window -t @99", function(r)
+      result = r
+    end)
+    t.feed("%begin 3 1 1\ncan't find window: @99\n%error 3 1 1\n")
+    assert.is_table(result)
+    assert.is_false(result.ok)
+    assert.is_truthy(result.stderr:find("can't find window"))
+  end)
+
+  it("preserves callback order across two interleaved commands", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local results = {}
+    gw:send_cmd("a", function(r)
+      table.insert(results, "a:" .. r.stdout)
+    end)
+    gw:send_cmd("b", function(r)
+      table.insert(results, "b:" .. r.stdout)
+    end)
+    t.feed("%begin 1 1 1\nA\n%end 1 1 1\n")
+    t.feed("%begin 2 2 1\nB\n%end 2 2 1\n")
+    assert.same({ "a:A", "b:B" }, results)
+  end)
+
+  it("accumulates a multi-line response body", function()
+    local t = make_fake_transport()
+    local gw = ready_gw(t)
+    local result
+    gw:send_cmd("list-windows", function(r)
+      result = r
+    end)
+    t.feed("%begin 1 1 1\n")
+    t.feed("@1\t%1\tdev\t0\n")
+    t.feed("@2\t%2\ttest\t0\n")
+    t.feed("%end 1 1 1\n")
+    assert.equals("@1\t%1\tdev\t0\n@2\t%2\ttest\t0", result.stdout)
+  end)
+end)

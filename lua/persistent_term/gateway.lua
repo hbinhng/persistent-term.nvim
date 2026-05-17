@@ -18,6 +18,9 @@ function M.new(opts)
   self._log = opts.log or default_log()
   self._state = "stopped"
   self._stdout_buf = ""
+  self._pending = {} -- FIFO of { cmd, cb }
+  self._in_block = false
+  self._block_lines = {}
   return self
 end
 
@@ -70,23 +73,73 @@ function Gateway:start()
   end)
 end
 
--- Placeholder; full parser comes in Task 5. For now, recognize only the
--- transitions the state-machine tests exercise.
 function Gateway:_handle_line(line)
-  if self._state == "starting" then
+  -- Track command-response blocks first; they take priority over state
+  -- transitions because the initial-attach block also goes through here.
+  if self._in_block then
     if line:match("^%%end ") then
-      self._state = "ready_no_session"
+      self:_finish_block(true)
     elseif line:match("^%%error ") then
-      self._state = "stopped"
+      self:_finish_block(false)
+    else
+      table.insert(self._block_lines, line)
     end
-  elseif self._state == "ready_no_session" then
-    if line:match("^%%session%-changed ") then
-      self._state = "ready"
-    end
+    return
   end
+
+  if line:match("^%%begin ") then
+    self._in_block = true
+    self._block_lines = {}
+    return
+  end
+
+  if self._state == "ready_no_session" and line:match("^%%session%-changed ") then
+    self._state = "ready"
+    return
+  end
+
   if line == "%exit" or line:match("^%%exit ") then
     self._state = "stopped"
+    -- Fail any pending callbacks.
+    for _, p in ipairs(self._pending) do
+      pcall(p.cb, { ok = false, stderr = "control mode exited" })
+    end
+    self._pending = {}
+    return
   end
+
+  -- Anything else: log at debug.
+  self._log.debug("gateway: unrecognized line: " .. line)
+end
+
+function Gateway:_finish_block(ok)
+  self._in_block = false
+  local body = table.concat(self._block_lines, "\n")
+  self._block_lines = {}
+
+  -- The very first %begin/%end after spawn is unsolicited (no caller).
+  if self._state == "starting" then
+    if ok then
+      self._state = "ready_no_session"
+    else
+      self._state = "stopped"
+    end
+    return
+  end
+
+  local p = table.remove(self._pending, 1)
+  if p then
+    if ok then
+      pcall(p.cb, { ok = true, stdout = body })
+    else
+      pcall(p.cb, { ok = false, stderr = body })
+    end
+  end
+end
+
+function Gateway:send_cmd(cmd, cb)
+  table.insert(self._pending, { cmd = cmd, cb = cb })
+  self._transport.write(cmd .. "\n")
 end
 
 return M
