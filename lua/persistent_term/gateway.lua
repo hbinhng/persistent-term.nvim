@@ -8,6 +8,25 @@ local function default_log()
   return require("persistent_term.log")
 end
 
+local function version_at_least(have, want)
+  -- "3.0", "3.0a", "3.2-rc2" -> compare numeric tuple prefix.
+  local function nums(s)
+    local out = {}
+    for c in s:gmatch("(%d+)") do
+      table.insert(out, tonumber(c))
+    end
+    return out
+  end
+  local h, w = nums(have), nums(want)
+  for i = 1, math.max(#h, #w) do
+    local a, b = h[i] or 0, w[i] or 0
+    if a ~= b then
+      return a > b
+    end
+  end
+  return true
+end
+
 --- Construct a new gateway. Does not start the subprocess; call gw:start().
 --- @param opts table  { transport = <table>, log = <optional> }
 function M.new(opts)
@@ -121,6 +140,7 @@ function Gateway:_handle_line(line)
 
   if self._state == "ready_no_session" and line:match("^%%session%-changed ") then
     self._state = "ready"
+    self:_run_bootstrap()
     return
   end
 
@@ -208,6 +228,26 @@ function Gateway:detach()
   end
   self._state = "detaching"
   self._transport.write("detach\n")
+end
+
+function Gateway:_run_bootstrap()
+  local self_ref = self
+  self:send_cmd("display-message -p '#{version}'", function(r)
+    if r.ok then
+      self_ref._version = vim.trim(r.stdout)
+    end
+  end)
+  self:send_cmd("set-option -g default-terminal xterm-256color", function() end)
+  self:send_cmd("set-environment -g COLORTERM truecolor", function() end)
+  -- Gate terminal-features on version. Captured in the previous send_cmd's
+  -- callback; we issue this one's request from the callback so it lands
+  -- after we know the version.
+  self:send_cmd("display-message -p '#{version}'", function(r)
+    if r.ok and version_at_least(self_ref._version or "", "3.2") then
+      self_ref._transport.write("set-option -g terminal-features xterm-256color:RGB\n")
+      table.insert(self_ref._pending, { cmd = "<deferred-terminal-features>", cb = function() end })
+    end
+  end)
 end
 
 return M

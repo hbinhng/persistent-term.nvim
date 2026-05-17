@@ -120,6 +120,13 @@ describe("gateway command queue", function()
     local gw = gateway.new({ transport = t })
     gw:start()
     t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    -- Drain the 4 bootstrap commands queued by _run_bootstrap.
+    t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n") -- display-message (version)
+    t.feed("%begin 3 2 1\n%end 3 2 1\n") -- set-option default-terminal
+    t.feed("%begin 4 3 1\n%end 4 3 1\n") -- set-environment COLORTERM
+    t.feed("%begin 5 4 1\n%end 5 4 1\n") -- display-message (2nd, gates terminal-features)
+    -- terminal-features set-option was written directly; drain its ack too.
+    t.feed("%begin 6 5 1\n%end 6 5 1\n")
     return gw
   end
 
@@ -376,5 +383,61 @@ describe("gateway.detach", function()
     t.feed("%exit\n")
     table.sort(closed)
     assert.same({ "%1", "%2" }, closed)
+  end)
+end)
+
+describe("gateway bootstrap", function()
+  local gateway
+  before_each(function()
+    package.loaded["persistent_term.gateway"] = nil
+    gateway = require("persistent_term.gateway")
+  end)
+
+  it("issues display-message + set-options after entering ready", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    -- Bootstrap should have been issued by now.
+    local cmds = table.concat(t.written, "")
+    assert.is_truthy(cmds:find("display%-message %-p '#{version}'"))
+    assert.is_truthy(cmds:find("set%-option %-g default%-terminal xterm%-256color"))
+    assert.is_truthy(cmds:find("set%-environment %-g COLORTERM truecolor"))
+  end)
+
+  it("sends terminal-features when tmux >= 3.2 (after version is known)", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    -- Drain the bootstrap responses: version first.
+    t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n")
+    -- The terminal-features command is conditionally sent AFTER version is known.
+    t.feed("%begin 3 2 1\n%end 3 2 1\n") -- default-terminal response
+    t.feed("%begin 4 3 1\n%end 4 3 1\n") -- COLORTERM response
+    t.feed("%begin 5 4 1\n%end 5 4 1\n") -- terminal-features response
+    local cmds = table.concat(t.written, "")
+    assert.is_truthy(cmds:find("set%-option %-g terminal%-features"))
+  end)
+
+  it("skips terminal-features when tmux < 3.2", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    t.feed("%begin 2 1 1\n3.0a\n%end 2 1 1\n")
+    t.feed("%begin 3 2 1\n%end 3 2 1\n")
+    t.feed("%begin 4 3 1\n%end 4 3 1\n")
+    local cmds = table.concat(t.written, "")
+    assert.is_nil(cmds:find("terminal%-features"))
+  end)
+
+  it("captures version string on the gateway", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n")
+    assert.equals("3.4", gw:version())
   end)
 end)
