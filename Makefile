@@ -1,4 +1,7 @@
-.PHONY: build test lint clean deps
+.PHONY: build test lint clean deps go-build go-test go-lint
+
+ROOT := $(shell pwd)
+GO_BIN := $(ROOT)/go/bin/persistent-term-pipe
 
 deps:
 	./tests/setup.sh
@@ -6,12 +9,19 @@ deps:
 clean:
 	rm -rf go/bin dist .deps
 
-# Real targets are added in later tasks as code/tests land.
-build:
-	@echo "build: nothing to do yet (no Go sources)"
+go-build:
+	mkdir -p go/bin
+	cd go && go build -o bin/persistent-term-pipe .
 
-test:
-	@echo "test: nothing to do yet"
+go-test:
+	cd go && go test -race ./...
 
-lint:
-	@echo "lint: nothing to do yet"
+go-lint:
+	cd go && go vet ./...
+	cd go && gofmt -l . | (! grep .)
+
+build: go-build
+
+test: go-build go-test
+
+lint: go-lint
