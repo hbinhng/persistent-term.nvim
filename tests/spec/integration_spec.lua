@@ -125,3 +125,155 @@ describe("persistent-term integration", function()
     assert.equals("60", vim.trim(res.stdout))
   end)
 end)
+
+describe("persistent-term crash recovery", function()
+  local function find_repo_root()
+    local here = vim.fn.fnamemodify(vim.fn.resolve(debug.getinfo(1).source:sub(2)), ":h:h:h")
+    return here
+  end
+
+  local function child_nvim(repo_root, lua_payload)
+    -- Spawn a fully isolated child Neovim that loads this repo's plugin
+    -- and runs `lua_payload`, then exits.
+    local minimal_init = repo_root .. "/tests/minimal_init.lua"
+    local install_dir = vim.env.PERSISTENT_TERM_INSTALL_DIR
+    assert(install_dir and install_dir ~= "", "test must set PERSISTENT_TERM_INSTALL_DIR before spawning child")
+    return vim.system({
+      "nvim", "--headless",
+      "--clean",
+      "-u", minimal_init,
+      "-c", "runtime plugin/persistent_term.lua",
+      "-c", "lua " .. lua_payload,
+    }, {
+      text = true,
+      timeout = 10000,
+      env = {
+        HOME = vim.env.HOME,
+        PATH = vim.env.PATH,
+        XDG_DATA_HOME = vim.env.XDG_DATA_HOME,
+        XDG_RUNTIME_DIR = vim.env.XDG_RUNTIME_DIR,
+        PERSISTENT_TERM_INSTALL_DIR = install_dir,
+      },
+    }):wait()
+  end
+
+  local function child_nvim_background(repo_root, lua_payload)
+    local minimal_init = repo_root .. "/tests/minimal_init.lua"
+    local install_dir = vim.env.PERSISTENT_TERM_INSTALL_DIR
+    assert(install_dir and install_dir ~= "", "test must set PERSISTENT_TERM_INSTALL_DIR before spawning child")
+    return vim.system({
+      "nvim", "--headless",
+      "--clean",
+      "-u", minimal_init,
+      "-c", "runtime plugin/persistent_term.lua",
+      "-c", "lua " .. lua_payload,
+    }, {
+      text = true,
+      env = {
+        HOME = vim.env.HOME,
+        PATH = vim.env.PATH,
+        XDG_DATA_HOME = vim.env.XDG_DATA_HOME,
+        XDG_RUNTIME_DIR = vim.env.XDG_RUNTIME_DIR,
+        PERSISTENT_TERM_INSTALL_DIR = install_dir,
+      },
+    })
+  end
+
+  local function tmux_list_panes()
+    local r = vim.system({
+      "tmux", "-L", "persistent-term",
+      "list-panes", "-aF", "#{@pterm_name}",
+    }, { text = true }):wait()
+    return r.stdout or ""
+  end
+
+  before_each(function()
+    -- inherit the install_local_binary + reset_tmux_server semantics from
+    -- the prior describe block. Run them explicitly.
+    vim.system({ "tmux", "-L", "persistent-term", "kill-server" }, { text = true }):wait()
+    -- Use the same install pattern as the prior integration tests.
+    local root = find_repo_root()
+    local src = root .. "/go/bin/persistent-term-pipe"
+    assert(vim.fn.filereadable(src) == 1, "build the helper first (make build)")
+    local dst_dir = vim.fn.tempname()
+    vim.fn.mkdir(dst_dir, "p")
+    vim.env.PERSISTENT_TERM_INSTALL_DIR = dst_dir
+    vim.fn.writefile(vim.fn.readfile(src, "b"), dst_dir .. "/persistent-term-pipe", "b")
+    vim.fn.system({ "chmod", "0755", dst_dir .. "/persistent-term-pipe" })
+  end)
+
+  after_each(function()
+    vim.system({ "tmux", "-L", "persistent-term", "kill-server" }, { text = true }):wait()
+  end)
+
+  it("pane survives child Neovim SIGKILL and is reattachable", function()
+    local root = find_repo_root()
+
+    -- Phase 1: spawn child A in background, have it create a long-lived
+    -- pane and then sit idle (vim.wait) so we can SIGKILL it mid-life.
+    local marker = "crash-survives-" .. tostring(math.random(1000000))
+    local payload_a = string.format(
+      [[vim.cmd("PTerm crashtest -- bash -c 'printf %s; sleep 120'") vim.wait(1500) vim.wait(30000)]],
+      marker
+    )
+    local proc_a = child_nvim_background(root, payload_a)
+    -- Wait until the pane shows up in tmux. (Polling is more robust than
+    -- a fixed sleep.)
+    local pane_seen = vim.wait(8000, function()
+      return tmux_list_panes():find("crashtest", 1, true) ~= nil
+    end, 100)
+    assert.is_true(pane_seen, "pane was never created by child A")
+
+    -- Phase 2: SIGKILL the child.
+    proc_a:kill("sigkill")
+    proc_a:wait()
+
+    -- After SIGKILL, the tmux pane MUST still be alive (this is the core promise).
+    local survives = vim.wait(3000, function()
+      return tmux_list_panes():find("crashtest", 1, true) ~= nil
+    end, 100)
+    assert.is_true(survives, "pane disappeared after child A was killed")
+
+    -- Phase 3: spawn fresh child B, run :PTermAttach crashtest, capture
+    -- the buffer contents, write them to a known file, then exit.
+    local capture_path = vim.fn.tempname() .. ".out"
+    local payload_b = string.format(
+      [[
+        vim.cmd("PTermAttach crashtest")
+        local bufnr = vim.api.nvim_get_current_buf()
+        local ok = vim.wait(3000, function()
+          local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+          for _, l in ipairs(lines) do
+            if l:find(%q, 1, true) then return true end
+          end
+          return false
+        end, 50)
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        local fp = io.open(%q, "w")
+        fp:write(tostring(ok) .. "\n")
+        fp:write(table.concat(lines, "\n"))
+        fp:close()
+        vim.cmd("qall!")
+      ]],
+      marker,
+      capture_path
+    )
+
+    local result_b = child_nvim(root, payload_b)
+    assert.equals(0, result_b.code,
+      "child B exited non-zero; stderr=\n" .. (result_b.stderr or ""))
+
+    -- Phase 4: verify child B saw the marker in its scrollback.
+    local out = vim.fn.readfile(capture_path)
+    local saw_marker = false
+    for _, line in ipairs(out) do
+      if line:find(marker, 1, true) then
+        saw_marker = true
+        break
+      end
+    end
+    assert.is_true(saw_marker,
+      "child B did not see marker " .. marker .. " in its buffer; capture:\n" ..
+      table.concat(out, "\n"))
+  end)
+end)
