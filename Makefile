@@ -1,7 +1,8 @@
-.PHONY: build test lint clean deps go-build go-test go-lint
+.PHONY: build test lint clean deps go-build go-test go-lint lua-test lua-lint
 
 ROOT := $(shell pwd)
 GO_BIN := $(ROOT)/go/bin/persistent-term-pipe
+NVIM ?= nvim
 
 deps:
 	./tests/setup.sh
@@ -20,8 +21,16 @@ go-lint:
 	cd go && go vet ./...
 	cd go && gofmt -l . | (! grep .)
 
+lua-test: deps
+	$(NVIM) --headless -u tests/minimal_init.lua \
+		-c "PlenaryBustedDirectory tests/spec/ {minimal_init='tests/minimal_init.lua'}"
+
+lua-lint:
+	luacheck lua/ tests/
+	stylua --check lua/ tests/
+
 build: go-build
 
-test: go-build go-test
+test: go-build go-test lua-test
 
-lint: go-lint
+lint: go-lint lua-lint
