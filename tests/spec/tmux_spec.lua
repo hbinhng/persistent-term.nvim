@@ -113,3 +113,43 @@ describe("persistent_term.tmux builders", function()
     assert.same({ "tmux", "-V" }, tmux.builders.version_check())
   end)
 end)
+
+describe("persistent_term.tmux executor + helpers", function()
+  local tmux
+
+  before_each(function()
+    package.loaded["persistent_term.tmux"] = nil
+    tmux = require("persistent_term.tmux")
+  end)
+
+  it("parse_list_panes splits lines into {pane_id, name}", function()
+    local rows = tmux.parse_list_panes("%12 dev\n%13 test\n%14 \n")
+    assert.same({
+      { pane_id = "%12", name = "dev" },
+      { pane_id = "%13", name = "test" },
+      { pane_id = "%14", name = "" },
+    }, rows)
+  end)
+
+  it("parse_new_session_output splits ids", function()
+    local r = tmux.parse_new_session_output("$3\t%12\t@7\n")
+    assert.same({ session_id = "$3", pane_id = "%12", window_id = "@7" }, r)
+  end)
+
+  it("compare_versions handles 3.0a vs 3.0", function()
+    assert.is_true(tmux.version_at_least("3.0", "3.0"))
+    assert.is_true(tmux.version_at_least("3.1", "3.0"))
+    assert.is_true(tmux.version_at_least("3.0a", "3.0"))
+    assert.is_false(tmux.version_at_least("2.9", "3.0"))
+  end)
+
+  it("run executes argv and returns ok/stdout/stderr/code", function()
+    -- Use a portable trivial command via the executor.
+    local res = tmux.run({ "true" })
+    assert.is_true(res.ok)
+    assert.equals(0, res.code)
+    local res2 = tmux.run({ "false" })
+    assert.is_false(res2.ok)
+    assert.is_true(res2.code ~= 0)
+  end)
+end)

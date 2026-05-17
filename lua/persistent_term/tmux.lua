@@ -97,4 +97,87 @@ function M.builders.version_check()
   return { "tmux", "-V" }
 end
 
+function M.run(argv, opts)
+  opts = opts or {}
+  local result = vim.system(argv, {
+    text = true,
+    timeout = opts.timeout or 5000,
+    stdin = opts.stdin,
+  }):wait()
+  return {
+    ok = result.code == 0,
+    code = result.code,
+    stdout = result.stdout or "",
+    stderr = result.stderr or "",
+  }
+end
+
+function M.parse_list_panes(stdout)
+  local rows = {}
+  for line in stdout:gmatch("[^\n]+") do
+    local pane_id, name = line:match("^(%S+)%s*(.*)$")
+    if pane_id then
+      table.insert(rows, { pane_id = pane_id, name = name or "" })
+    end
+  end
+  return rows
+end
+
+function M.parse_new_session_output(stdout)
+  local trimmed = stdout:gsub("[\r\n]+$", "")
+  local sid, pid, wid = trimmed:match("^(%S+)\t(%S+)\t(%S+)$")
+  if not sid then
+    return nil
+  end
+  return { session_id = sid, pane_id = pid, window_id = wid }
+end
+
+local function num_tuple(s)
+  local out = {}
+  for chunk in s:gmatch("(%d+)") do
+    table.insert(out, tonumber(chunk))
+  end
+  return out
+end
+
+function M.version_at_least(have, want)
+  -- tmux versions look like "3.0", "3.0a", "3.2-rc2". We extract just the
+  -- numeric prefix tuple and compare.
+  local h, w = num_tuple(have), num_tuple(want)
+  for i = 1, math.max(#h, #w) do
+    local a, b = h[i] or 0, w[i] or 0
+    if a ~= b then
+      return a > b
+    end
+  end
+  return true
+end
+
+local version_cached = nil
+function M.check_version(min)
+  if version_cached ~= nil then
+    return version_cached
+  end
+  local res = M.run(M.builders.version_check())
+  if not res.ok then
+    version_cached = { ok = false, reason = "tmux not found" }
+    return version_cached
+  end
+  local v = res.stdout:match("tmux%s+(%S+)")
+  if not v then
+    version_cached = { ok = false, reason = "could not parse tmux version: " .. res.stdout }
+    return version_cached
+  end
+  if not M.version_at_least(v, min) then
+    version_cached = { ok = false, reason = string.format("tmux %s found; %s required", v, min) }
+  else
+    version_cached = { ok = true, version = v }
+  end
+  return version_cached
+end
+
+function M._reset_version_cache()
+  version_cached = nil
+end
+
 return M
