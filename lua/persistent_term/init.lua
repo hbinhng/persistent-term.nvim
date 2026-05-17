@@ -43,4 +43,12 @@ function M.complete_attach(arg_lead, cmd_line, cursor_pos)
   return require("persistent_term.command").complete_attach(arg_lead, cmd_line, cursor_pos)
 end
 
+function M.list()
+  return require("persistent_term.command").list()
+end
+
+function M.cmd_list()
+  require("persistent_term.command").cmd_list()
+end
+
 return M

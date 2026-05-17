@@ -12,7 +12,7 @@ end
 
 vim.api.nvim_create_user_command("PTerm", lazy("open"), {
   nargs = "+",
-  desc = "Open a persistent terminal: :PTerm {name} -- {cmd...}",
+  desc = "Open a persistent terminal: :PTerm {name} [-- {cmd...}] (no -- runs $SHELL)",
 })
 
 vim.api.nvim_create_user_command("PTermAttach", lazy("attach"), {
@@ -33,4 +33,10 @@ vim.api.nvim_create_user_command("PTermInstall", function(_)
   require("persistent_term").install()
 end, {
   desc = "Download persistent-term-pipe helper binary",
+})
+
+vim.api.nvim_create_user_command("PTermList", function(_)
+  require("persistent_term").cmd_list()
+end, {
+  desc = "List persistent-term panes on the tmux server",
 })
