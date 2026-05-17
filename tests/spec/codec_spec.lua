@@ -32,11 +32,25 @@ describe("codec.decode_output_payload", function()
     assert.equals("\xc3\xa9", codec.decode_output_payload("\xc3\xa9"))
   end)
 
+  it("skips \\r embedded inside an octal triple", function()
+    -- Wire bytes: \, 1, CR, 3, 4  →  octal 134 = 92 = literal backslash.
+    -- The CR lands between the first and second octal digits; the mid-octal
+    -- skip branch (codec.lua:21-22) must absorb it and still accumulate all
+    -- three digits before emitting the decoded byte.
+    assert.equals("\\", codec.decode_output_payload("\\1\r34"))
+  end)
+
   it("replaces a malformed \\ followed by non-octal with '?'", function()
     -- Forgiving recovery per iTerm2's TmuxGateway.m:165-168.
     local out = codec.decode_output_payload("\\X")
     -- The byte where \ started becomes '?'; the X passes through.
     assert.equals("?X", out)
+  end)
+
+  it("replaces a lone trailing \\ with '?'", function()
+    -- Payload ends immediately after the backslash: consumed stays 0,
+    -- so the malformed-escape branch fires and emits '?'.
+    assert.equals("?", codec.decode_output_payload("\\"))
   end)
 
   it("decodes a full %output payload with CSI", function()
