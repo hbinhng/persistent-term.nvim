@@ -89,18 +89,22 @@ describe("persistent-term integration", function()
     local orig_shell = vim.env.SHELL
     vim.env.SHELL = fake
 
-    vim.cmd("PTerm shdef")
-    local bufnr = vim.api.nvim_get_current_buf()
-    local ok = wait_until(function()
-      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-      for _, l in ipairs(lines) do
-        if l:find("PTERM-SHELL-READY-", 1, true) then return true end
-      end
-      return false
-    end, 5000)
+    local ok_call, err = pcall(function()
+      vim.cmd("PTerm shdef")
+      local bufnr = vim.api.nvim_get_current_buf()
+      local ok = wait_until(function()
+        local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+        for _, l in ipairs(lines) do
+          if l:find("PTERM-SHELL-READY-", 1, true) then return true end
+        end
+        return false
+      end, 5000)
+      assert.is_truthy(ok, "expected fake $SHELL to be exec'd and produce sentinel")
+    end)
 
     vim.env.SHELL = orig_shell
-    assert.is_truthy(ok, "expected fake $SHELL to be exec'd and produce sentinel")
+    vim.fn.delete(fake)
+    if not ok_call then error(err) end
   end)
 
   it("PTermAttach after :bd replays scrollback", function()
