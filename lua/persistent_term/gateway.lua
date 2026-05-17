@@ -101,7 +101,7 @@ function Gateway:_handle_line(line)
     local sub = self._subs[pid]
     if sub then
       local codec = require("persistent_term.codec")
-      sub.on_bytes(codec.decode_output_payload(payload))
+      pcall(sub.on_bytes, codec.decode_output_payload(payload))
     end
     return
   end
