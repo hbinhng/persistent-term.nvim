@@ -230,3 +230,49 @@ describe("persistent_term.bridge data path", function()
     vim.api.nvim_buf_delete(buf.bufnr, { force = true })
   end)
 end)
+
+describe("persistent_term.bridge resize", function()
+  local bridge
+
+  before_each(function()
+    package.loaded["persistent_term.bridge"] = nil
+    bridge = require("persistent_term.bridge")
+  end)
+
+  it("debounces resize and calls tmux resize-pane once per burst", function()
+    local called = {}
+    local fake_tmux = {
+      builders = require("persistent_term.tmux").builders,
+      run = function(argv)
+        table.insert(called, argv)
+        return { ok = true, code = 0, stdout = "", stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.tmux"] = fake_tmux
+
+    local buf = bridge.create_buffer("rz")
+    local handle = {
+      bufnr = buf.bufnr, chan = buf.chan,
+      name = "rz", pane_id = "%42",
+      _on_input_holder = buf._on_input_holder,
+    }
+
+    -- Fire 5 resize requests in quick succession.
+    for _ = 1, 5 do
+      bridge.resize_to(handle, 80, 24)
+    end
+    -- Debounce window is 50ms; wait 200ms for the timer to fire.
+    vim.wait(200)
+
+    assert.equals(1, #called)
+    local argv = called[1]
+    -- last 4 elements: -x 80 -y 24
+    assert.equals("-x", argv[#argv - 3])
+    assert.equals("80", argv[#argv - 2])
+    assert.equals("-y", argv[#argv - 1])
+    assert.equals("24", argv[#argv])
+
+    vim.api.nvim_buf_delete(buf.bufnr, { force = true })
+    package.loaded["persistent_term.tmux"] = nil
+  end)
+end)

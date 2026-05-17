@@ -203,4 +203,39 @@ function M.detach(handle, reason)
   end
 end
 
+local RESIZE_DEBOUNCE_MS = 50
+
+function M.resize_to(handle, cols, rows)
+  handle._pending_size = { cols = cols, rows = rows }
+  if handle._resize_timer then
+    handle._resize_timer:stop()
+    handle._resize_timer:close()
+    handle._resize_timer = nil
+  end
+  local timer = uv.new_timer()
+  handle._resize_timer = timer
+  timer:start(RESIZE_DEBOUNCE_MS, 0, function()
+    vim.schedule(function()
+      if not handle._pending_size then return end
+      local size = handle._pending_size
+      handle._pending_size = nil
+      if not handle.pane_id then return end
+      local tmux = require("persistent_term.tmux")
+      local argv = tmux.builders.resize_pane(handle.pane_id, size.cols, size.rows)
+      local res = tmux.run(argv)
+      if not res.ok then
+        require("persistent_term.log").warn(
+          string.format("resize-pane failed for %s: %s", handle.pane_id, res.stderr)
+        )
+      end
+    end)
+    if not timer:is_closing() then
+      timer:close()
+    end
+    if handle._resize_timer == timer then
+      handle._resize_timer = nil
+    end
+  end)
+end
+
 return M
