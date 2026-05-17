@@ -205,9 +205,10 @@ describe("persistent-term integration", function()
     local out = {}
     local orig = vim.notify
     vim.notify = function(msg, _l) table.insert(out, msg) end
-    thunk()
+    local ok, err = pcall(thunk)
     vim.wait(100, function() return #out > 0 end)
     vim.notify = orig
+    if not ok then error(err) end
     return table.concat(out, "\n")
   end
 
@@ -219,7 +220,7 @@ describe("persistent-term integration", function()
   it("PTermList lists 2 panes with attached=yes", function()
     vim.cmd([[PTerm l1 -- bash -c 'sleep 1; printf one;   sleep 30']])
     vim.cmd([[PTerm l2 -- bash -c 'sleep 1; printf two;   sleep 30']])
-    wait_until(function()
+    assert.is_truthy(wait_until(function()
       local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
       local seen_l1, seen_l2
       for line in (res.stdout or ""):gmatch("[^\n]+") do
@@ -227,7 +228,7 @@ describe("persistent-term integration", function()
         if line == "l2" then seen_l2 = true end
       end
       return seen_l1 and seen_l2
-    end, 3000)
+    end, 3000), "tmux never showed both panes")
 
     local out = capture_notify(function() vim.cmd("PTermList") end)
     local n = 0
@@ -236,28 +237,30 @@ describe("persistent-term integration", function()
     assert.is_truthy(out:find("l1", 1, true))
     assert.is_truthy(out:find("l2", 1, true))
     local yes_count = 0
-    for _ in out:gmatch("yes") do yes_count = yes_count + 1 end
-    assert.equals(2, yes_count, "expected 2 'yes', got:\n" .. out)
+    for _ in out:gmatch("%f[%w]yes%f[%W]") do yes_count = yes_count + 1 end
+    assert.equals(2, yes_count, "expected 2 'yes' (whole-word), got:\n" .. out)
   end)
 
   it("PTermList drops the killed pane", function()
     vim.cmd([[PTerm k1 -- bash -c 'sleep 1; printf one; sleep 30']])
     vim.cmd([[PTerm k2 -- bash -c 'sleep 1; printf two; sleep 30']])
-    wait_until(function()
+    assert.is_truthy(wait_until(function()
       local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
       return (res.stdout or ""):find("k1") and (res.stdout or ""):find("k2")
-    end, 3000)
+    end, 3000), "tmux never showed both k1 and k2")
+    local k1_buf
     for _, b in ipairs(vim.api.nvim_list_bufs()) do
       if vim.api.nvim_buf_get_name(b) == "pterm://k1" then
-        vim.api.nvim_set_current_buf(b)
+        k1_buf = b
         break
       end
     end
-    vim.cmd("PTermKill")
-    wait_until(function()
+    assert.is_truthy(k1_buf, "could not find pterm://k1 buffer")
+    require("persistent_term.command").cmd_kill(k1_buf)
+    assert.is_truthy(wait_until(function()
       local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
       return not (res.stdout or ""):find("k1", 1, true)
-    end, 3000)
+    end, 3000), "k1 never disappeared from tmux after kill")
     local out = capture_notify(function() vim.cmd("PTermList") end)
     assert.is_nil(out:find("k1", 1, true), "k1 should be gone, got:\n" .. out)
     assert.is_truthy(out:find("k2", 1, true), "k2 should remain, got:\n" .. out)
