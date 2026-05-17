@@ -87,6 +87,7 @@ describe("persistent_term.command.cmd_open", function()
     package.loaded["persistent_term.tmux"] = {
       builders = fake_builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
       is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       parse_new_session_output = require("persistent_term.tmux").parse_new_session_output,
@@ -206,6 +207,72 @@ describe("persistent_term.command.cmd_open", function()
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end)
 
+  it("skips terminal-features bootstrap on tmux < 3.2", function()
+    local calls = {}
+    local fake_builders = require("persistent_term.tmux").builders
+    package.loaded["persistent_term.tmux"] = {
+      builders = fake_builders,
+      check_version = function(_) return { ok = true, version = "3.0" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
+      is_no_server = require("persistent_term.tmux").is_no_server,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      parse_new_session_output = require("persistent_term.tmux").parse_new_session_output,
+      run = function(argv)
+        table.insert(calls, argv)
+        local sub = argv[4]
+        if sub == "list-panes" then
+          return { ok = true, code = 0, stdout = "", stderr = "" }
+        elseif sub == "new-session" then
+          return { ok = true, code = 0, stdout = "$1\t%10\t@2\n", stderr = "" }
+        end
+        return { ok = true, code = 0, stdout = "", stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/persistent-term-pipe" end,
+      is_installed = function() return true end,
+    }
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(_)
+        local bufnr = vim.api.nvim_create_buf(true, true)
+        return { bufnr = bufnr, chan = -1, _on_input_holder = { _on_input = function() end } }
+      end,
+      start_server = function(opts)
+        vim.defer_fn(function() opts.on_attach({ is_closing = function() return false end, close = function() end, write = function() end, read_start = function() end }) end, 10)
+        return { close = function() end }
+      end,
+      attach = function(_, _) end,
+      install_buffer_hook = function(_) end,
+      resize_to = function(_, _, _) end,
+      detach = function(_, _) end,
+      kill = function(_) end,
+    }
+
+    command = require("persistent_term.command")
+    local handle, err = command.cmd_open("dev -- bash -c hi")
+    assert.is_nil(err)
+    assert.is_truthy(handle)
+
+    -- On tmux 3.0 the bootstrap is only two commands: default-terminal + COLORTERM.
+    -- terminal-features must NOT appear anywhere in the call list.
+    for _, argv in ipairs(calls) do
+      if argv[4] == "set-option" and argv[6] == "terminal-features" then
+        error("terminal-features should not be set on tmux 3.0; got argv: " .. vim.inspect(argv))
+      end
+    end
+    assert.same(
+      { "tmux", "-L", "persistent-term", "set-option", "-g", "default-terminal", "xterm-256color" },
+      calls[1]
+    )
+    assert.same(
+      { "tmux", "-L", "persistent-term", "set-environment", "-g", "COLORTERM", "truecolor" },
+      calls[2]
+    )
+    assert.equals("list-panes", calls[3][4])
+
+    vim.api.nvim_buf_delete(handle.bufnr, { force = true })
+  end)
+
   it("substitutes resolved shell argv when parse returns nil argv", function()
     local recorded_argv
     package.loaded["persistent_term.tmux"] = {
@@ -224,7 +291,8 @@ describe("persistent_term.command.cmd_open", function()
       parse_new_session_output = function(_)
         return { session_id = "$1", pane_id = "%1", window_id = "@1" }
       end,
-      check_version = function(_) return { ok = true } end,
+      check_version = function(_) return { ok = true, version = "3.4" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
       is_no_server = function(_) return false end,
     }
     package.loaded["persistent_term.install"] = {
@@ -261,6 +329,7 @@ describe("persistent_term.command.cmd_open", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
       is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_) return { ok = true, code = 0, stdout = "%99\t@9\tdev\n", stderr = "" } end,

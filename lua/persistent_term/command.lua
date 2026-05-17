@@ -200,7 +200,9 @@ function M.cmd_open(raw)
   end
 
   tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
-  tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
+  if tmux.version_at_least(v.version, "3.2") then
+    tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
+  end
   tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
 
   local list = tmux.run(tmux.builders.list_panes())
