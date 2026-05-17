@@ -18,7 +18,7 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 {
   "hbinhng/persistent-term.nvim",
   build = ":PTermInstall",
-  cmd = { "PTerm", "PTermAttach", "PTermKill", "PTermInstall" },
+  cmd = { "PTerm", "PTermAttach", "PTermKill", "PTermInstall", "PTermList" },
 }
 ```
 
@@ -28,14 +28,17 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```vim
 :PTerm dev -- npm run dev          " create a pane and open a buffer attached to it
+:PTerm dev                         " same, but run $SHELL (falls back to /bin/sh)
 :PTermAttach dev                   " reopen a buffer for an existing pane (after restart, etc.)
 :PTermAttach %12                   " same, but by raw tmux pane id
+:PTermList                         " print every pterm pane on the tmux server
 :PTermKill                         " kill the current buffer's pane
 ```
 
 - `:bd` (or `BufWipeout`) detaches the bridge but keeps the pane running. Reattach with `:PTermAttach`.
 - `:PTermKill` is the only command that destroys the pane.
 - Tab-completion on `:PTermAttach` lists every known name and raw pane id.
+- `:PTermList` columns: `NAME PANE ATTACHED STATUS`. `ATTACHED=yes` means this Neovim instance has a live buffer for the pane; `STATUS=dead` means the pane's process exited but tmux preserved the pane (`remain-on-exit on`).
 
 ## How it works
 
@@ -44,6 +47,47 @@ Neovim (vim.uv socket server) <-> persistent-term-pipe (Go) <-> tmux pipe-pane <
 ```
 
 Tmux runs on its own private socket (`tmux -L persistent-term`), isolated from your normal tmux server and config. Pane names are stored as tmux pane user options (`@pterm_name`), so there is no metadata file to corrupt or stale.
+
+## Recipes
+
+### Telescope picker
+
+`require("persistent_term").list()` returns a table of pane rows. Wire it into your fuzzy finder of choice instead of bundling a picker into the plugin:
+
+```lua
+vim.keymap.set("n", "<leader>tp", function()
+  local pickers      = require("telescope.pickers")
+  local finders      = require("telescope.finders")
+  local conf         = require("telescope.config").values
+  local actions      = require("telescope.actions")
+  local action_state = require("telescope.actions.state")
+
+  pickers.new({}, {
+    prompt_title = "persistent-term",
+    finder = finders.new_table {
+      results = require("persistent_term").list(),
+      entry_maker = function(row)
+        return {
+          value   = row.pane_id,
+          display = string.format("%-12s  %s  %s",
+                      row.name, row.status,
+                      row.attached and "[attached]" or ""),
+          ordinal = row.name,
+        }
+      end,
+    },
+    sorter = conf.generic_sorter({}),
+    attach_mappings = function(_, map)
+      actions.select_default:replace(function(bufnr)
+        actions.close(bufnr)
+        local entry = action_state.get_selected_entry()
+        vim.cmd("PTermAttach " .. entry.value)
+      end)
+      return true
+    end,
+  }):find()
+end, { desc = "Pick a persistent-term pane" })
+```
 
 ## Diagnostics
 
