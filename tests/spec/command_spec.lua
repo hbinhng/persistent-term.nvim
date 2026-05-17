@@ -216,6 +216,8 @@ describe("persistent_term.command.cmd_open", function()
         pipe_pane   = function() return { "true" } end,
         set_window_option = function() return { "true" } end,
         set_pane_option   = function() return { "true" } end,
+        set_server_option = function() return { "true" } end,
+        set_server_env    = function() return { "true" } end,
       },
       run = function(_) return { ok = true, code = 0, stdout = "", stderr = "" } end,
       parse_list_panes = function(_) return {} end,
