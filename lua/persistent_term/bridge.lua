@@ -103,6 +103,9 @@ end
 local function set_buffer_options(bufnr)
   vim.bo[bufnr].bufhidden = "hide"
   vim.bo[bufnr].swapfile = false
+  -- nvim_open_term sets buftype=terminal but leaves filetype empty; icon
+  -- plugins (nvim-web-devicons, mini.icons, bufferline) key off filetype.
+  vim.bo[bufnr].filetype = "terminal"
 end
 
 function M.create_buffer(name)
