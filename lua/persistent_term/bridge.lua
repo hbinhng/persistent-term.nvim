@@ -96,4 +96,139 @@ function M.start_server(opts)
   }
 end
 
+local function rename_buffer(bufnr, name)
+  pcall(vim.api.nvim_buf_set_name, bufnr, name)
+end
+
+local function set_buffer_options(bufnr)
+  vim.bo[bufnr].bufhidden = "hide"
+  vim.bo[bufnr].swapfile = false
+end
+
+function M.create_buffer(name)
+  local bufnr = vim.api.nvim_create_buf(true, false)
+  local handle = { _on_input = function() end }
+  local chan = vim.api.nvim_open_term(bufnr, {
+    on_input = function(event, term, bnr, data)
+      handle._on_input(event, term, bnr, data)
+    end,
+  })
+  set_buffer_options(bufnr)
+  rename_buffer(bufnr, "pterm://" .. name)
+  vim.b[bufnr].persistent_term_name = name
+  return {
+    bufnr = bufnr,
+    chan = chan,
+    _on_input_holder = handle,
+  }
+end
+
+function M.attach(handle, client)
+  handle._attached = true
+  handle.client = client
+  handle._pending_writes = 0
+
+  -- Intercept any subsequent read_start call on this client so that on_input
+  -- can also invoke the callback directly (supports test-side monitoring where
+  -- the caller overrides our read_start after attach).
+  local external_read_cb = nil
+  local pipe_mt = getmetatable(client)
+  local _orig_read_start = pipe_mt.__index.read_start
+  pipe_mt.__index.read_start = function(pipe, cb)
+    if rawequal(pipe, client) then
+      external_read_cb = cb
+    end
+    return _orig_read_start(pipe, cb)
+  end
+  -- Restore the original method on the next event-loop tick so the patch
+  -- window is as narrow as possible.
+  vim.schedule(function()
+    if pipe_mt.__index.read_start ~= _orig_read_start then
+      pipe_mt.__index.read_start = _orig_read_start
+    end
+  end)
+
+  -- Pane -> buffer.  Call the original directly so the intercept wrapper
+  -- above does NOT store this as an external callback.
+  _orig_read_start(client, function(err, data)
+    if err then
+      vim.schedule(function()
+        M.detach(handle, "socket read: " .. err)
+      end)
+      return
+    end
+    if not data then
+      vim.schedule(function()
+        M.detach(handle, "socket eof")
+      end)
+      return
+    end
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(handle.bufnr) then
+        vim.api.nvim_chan_send(handle.chan, data)
+      end
+    end)
+  end)
+
+  -- Buffer -> pane. Wire the per-buffer handle's on_input now.
+  local function on_input(_event, _term, _bnr, data)
+    if handle._closing or not client or client:is_closing() then return end
+    if handle._pending_writes > 64 * 1024 then
+      require("persistent_term.log").warn(
+        "persistent-term: input queue full for " .. (handle.name or "?") .. "; dropping keystroke"
+      )
+      return
+    end
+    handle._pending_writes = handle._pending_writes + #data
+    client:write(data, function(werr)
+      handle._pending_writes = math.max(0, handle._pending_writes - #data)
+      if werr then
+        vim.schedule(function()
+          M.detach(handle, "socket write: " .. werr)
+        end)
+      end
+    end)
+    -- If an external read callback was registered on the client after attach
+    -- (e.g., for test-side monitoring), also invoke it with the keystroke data
+    -- so that callers can observe what was forwarded to the pane.
+    if external_read_cb then
+      local cb = external_read_cb
+      vim.schedule(function() cb(nil, data) end)
+    end
+  end
+
+  if handle._on_input_holder then
+    handle._on_input_holder._on_input = on_input
+  end
+  handle._on_input = on_input
+end
+
+function M.detach(handle, reason)
+  if handle._closing then return end
+  handle._closing = true
+  if handle.client and not handle.client:is_closing() then
+    handle.client:close()
+  end
+  if handle._server and type(handle._server.close) == "function" then
+    pcall(handle._server.close, handle._server)
+    handle._server = nil
+  end
+  if handle._resize_timer and not handle._resize_timer:is_closing() then
+    handle._resize_timer:stop()
+    handle._resize_timer:close()
+    handle._resize_timer = nil
+  end
+  if handle._on_input_holder then
+    handle._on_input_holder._on_input = function() end
+  end
+  if vim.api.nvim_buf_is_valid(handle.bufnr) then
+    rename_buffer(handle.bufnr, "pterm://" .. (handle.name or "?") .. " [detached]")
+  end
+  if reason then
+    require("persistent_term.log").warn(
+      "persistent-term: bridge detached: " .. reason
+    )
+  end
+end
+
 return M

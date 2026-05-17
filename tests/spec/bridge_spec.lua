@@ -114,3 +114,115 @@ describe("persistent_term.bridge server", function()
     assert.equals("", vim.fn.getftype(sock_path))
   end)
 end)
+
+describe("persistent_term.bridge data path", function()
+  local bridge
+
+  before_each(function()
+    package.loaded["persistent_term.bridge"] = nil
+    bridge = require("persistent_term.bridge")
+  end)
+
+  it("create_buffer returns a terminal-type buffer with a channel", function()
+    local result = bridge.create_buffer("dev")
+    assert.is_number(result.bufnr)
+    assert.is_number(result.chan)
+    assert.equals("terminal", vim.bo[result.bufnr].buftype)
+    assert.equals("hide", vim.bo[result.bufnr].bufhidden)
+    assert.equals(false, vim.bo[result.bufnr].swapfile)
+    assert.equals("pterm://dev", vim.api.nvim_buf_get_name(result.bufnr))
+    vim.api.nvim_buf_delete(result.bufnr, { force = true })
+  end)
+
+  it("attach pipes socket bytes into the buffer via chan_send", function()
+    local sock_path = vim.fn.tempname() .. ".sock"
+    local buf = bridge.create_buffer("test")
+    local handle = {
+      bufnr = buf.bufnr, chan = buf.chan,
+      name = "test", pane_id = "%99",
+      _on_input_holder = buf._on_input_holder,
+    }
+    local server = bridge.start_server({
+      socket_path = sock_path,
+      token = "T",
+      on_attach = function(client)
+        bridge.attach(handle, client)
+      end,
+      on_error = function(_) end,
+    })
+
+    local uv = vim.uv or vim.loop
+    local client = uv.new_pipe(false)
+    client:connect(sock_path, function(err)
+      assert(not err, err)
+      client:write("AUTH T\n")
+      vim.defer_fn(function()
+        client:write("hello-from-pane\n")
+      end, 50)
+    end)
+
+    local ok = vim.wait(2000, function()
+      local lines = vim.api.nvim_buf_get_lines(buf.bufnr, 0, -1, false)
+      for _, l in ipairs(lines) do
+        if l:find("hello-from-pane", 1, true) then
+          return true
+        end
+      end
+      return false
+    end)
+    assert.is_true(ok)
+    client:close()
+    server:close()
+    vim.api.nvim_buf_delete(buf.bufnr, { force = true })
+  end)
+
+  it("on_input writes user keystrokes back to the socket", function()
+    local sock_path = vim.fn.tempname() .. ".sock"
+    local buf = bridge.create_buffer("kb")
+    local handle = {
+      bufnr = buf.bufnr, chan = buf.chan,
+      name = "kb", pane_id = "%1",
+      _on_input_holder = buf._on_input_holder,
+    }
+
+    local received = {}
+    local server = bridge.start_server({
+      socket_path = sock_path,
+      token = "T",
+      on_attach = function(client)
+        bridge.attach(handle, client)
+        client:read_start(function(_, data)
+          if data then
+            table.insert(received, data)
+          end
+        end)
+      end,
+      on_error = function(_) end,
+    })
+
+    local uv = vim.uv or vim.loop
+    local client = uv.new_pipe(false)
+    client:connect(sock_path, function(err)
+      assert(not err, err)
+      client:write("AUTH T\n")
+    end)
+
+    -- Wait for handshake to land.
+    assert.is_true(vim.wait(1000, function()
+      return handle._attached == true
+    end))
+
+    -- Simulate user input via the underlying channel's on_input.
+    handle._on_input("i", buf.chan, buf.bufnr, "ls\r")
+    assert.is_true(vim.wait(1000, function()
+      for _, chunk in ipairs(received) do
+        if chunk:find("ls\r", 1, true) then return true end
+      end
+      return false
+    end))
+
+    client:close()
+    server:close()
+    vim.api.nvim_buf_delete(buf.bufnr, { force = true })
+  end)
+end)
