@@ -30,7 +30,7 @@ describe("persistent_term.tmux builders", function()
     assert.same({
       "tmux", "-L", "persistent-term",
       "list-panes", "-a",
-      "-F", "#{pane_id}\t#{window_id}\t#{@pterm_name}",
+      "-F", "#{pane_id}\t#{window_id}\t#{@pterm_name}\t#{pane_dead}",
     }, tmux.builders.list_panes())
   end)
 
@@ -122,12 +122,21 @@ describe("persistent_term.tmux executor + helpers", function()
     tmux = require("persistent_term.tmux")
   end)
 
-  it("parse_list_panes splits lines into {pane_id, name}", function()
-    local rows = tmux.parse_list_panes("%12\t@1\tdev\n%13\t@2\ttest\n%14\t@3\t\n")
+  it("parse_list_panes splits 4-field rows", function()
+    local rows = tmux.parse_list_panes(
+      "%12\t@1\tdev\t0\n%13\t@2\ttest\t1\n%14\t@3\t\t0\n"
+    )
     assert.same({
-      { pane_id = "%12", window_id = "@1", name = "dev" },
-      { pane_id = "%13", window_id = "@2", name = "test" },
-      { pane_id = "%14", window_id = "@3", name = "" },
+      { pane_id = "%12", window_id = "@1", name = "dev",  dead = false },
+      { pane_id = "%13", window_id = "@2", name = "test", dead = true },
+      { pane_id = "%14", window_id = "@3", name = "",     dead = false },
+    }, rows)
+  end)
+
+  it("parse_list_panes tolerates 3-field rows (back-compat)", function()
+    local rows = tmux.parse_list_panes("%12\t@1\tdev\n")
+    assert.same({
+      { pane_id = "%12", window_id = "@1", name = "dev", dead = false },
     }, rows)
   end)
 

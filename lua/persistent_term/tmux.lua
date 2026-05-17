@@ -37,7 +37,10 @@ end
 
 function M.builders.list_panes()
   local argv = copy(SOCKET)
-  vim.list_extend(argv, { "list-panes", "-a", "-F", "#{pane_id}\t#{window_id}\t#{@pterm_name}" })
+  vim.list_extend(argv, {
+    "list-panes", "-a", "-F",
+    "#{pane_id}\t#{window_id}\t#{@pterm_name}\t#{pane_dead}",
+  })
   return argv
 end
 
@@ -130,9 +133,14 @@ end
 function M.parse_list_panes(stdout)
   local rows = {}
   for line in stdout:gmatch("[^\n]+") do
-    local pane_id, window_id, name = line:match("^([^\t]+)\t([^\t]+)\t(.*)$")
+    local pane_id, window_id, name, dead = line:match("^([^\t]+)\t([^\t]+)\t([^\t]*)\t?(.*)$")
     if pane_id then
-      table.insert(rows, { pane_id = pane_id, window_id = window_id, name = name or "" })
+      table.insert(rows, {
+        pane_id   = pane_id,
+        window_id = window_id,
+        name      = name or "",
+        dead      = dead == "1",
+      })
     end
   end
   return rows
