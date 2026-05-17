@@ -76,6 +76,33 @@ describe("persistent-term integration", function()
     end, 5000))
   end)
 
+  it("PTerm <name> with no -- runs $SHELL", function()
+    local fake = vim.fn.tempname() .. "-fake-shell.sh"
+    vim.fn.writefile({
+      "#!/bin/sh",
+      "sleep 1",
+      "echo PTERM-SHELL-READY-$$",
+      "sleep 30",
+    }, fake)
+    vim.fn.system({ "chmod", "0755", fake })
+
+    local orig_shell = vim.env.SHELL
+    vim.env.SHELL = fake
+
+    vim.cmd("PTerm shdef")
+    local bufnr = vim.api.nvim_get_current_buf()
+    local ok = wait_until(function()
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      for _, l in ipairs(lines) do
+        if l:find("PTERM-SHELL-READY-", 1, true) then return true end
+      end
+      return false
+    end, 5000)
+
+    vim.env.SHELL = orig_shell
+    assert.is_truthy(ok, "expected fake $SHELL to be exec'd and produce sentinel")
+  end)
+
   it("PTermAttach after :bd replays scrollback", function()
     vim.cmd([[PTerm rep -- bash -c 'sleep 1; echo replay-line; sleep 30']])
     local bufnr = vim.api.nvim_get_current_buf()
