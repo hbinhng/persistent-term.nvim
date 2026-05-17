@@ -185,26 +185,28 @@ describe("persistent_term.bridge data path", function()
       _on_input_holder = buf._on_input_holder,
     }
 
-    local received = {}
     local server = bridge.start_server({
       socket_path = sock_path,
       token = "T",
       on_attach = function(client)
         bridge.attach(handle, client)
-        client:read_start(function(_, data)
-          if data then
-            table.insert(received, data)
-          end
-        end)
       end,
       on_error = function(_) end,
     })
 
+    -- Bytes written by the bridge to its server-side client flow to the
+    -- OTHER end of the socket — the test_client below.
+    local received = {}
     local uv = vim.uv or vim.loop
-    local client = uv.new_pipe(false)
-    client:connect(sock_path, function(err)
+    local test_client = uv.new_pipe(false)
+    test_client:connect(sock_path, function(err)
       assert(not err, err)
-      client:write("AUTH T\n")
+      test_client:write("AUTH T\n")
+      test_client:read_start(function(_, data)
+        if data then
+          table.insert(received, data)
+        end
+      end)
     end)
 
     -- Wait for handshake to land.
@@ -216,12 +218,14 @@ describe("persistent_term.bridge data path", function()
     handle._on_input("i", buf.chan, buf.bufnr, "ls\r")
     assert.is_true(vim.wait(1000, function()
       for _, chunk in ipairs(received) do
-        if chunk:find("ls\r", 1, true) then return true end
+        if chunk:find("ls\r", 1, true) then
+          return true
+        end
       end
       return false
     end))
 
-    client:close()
+    test_client:close()
     server:close()
     vim.api.nvim_buf_delete(buf.bufnr, { force = true })
   end)

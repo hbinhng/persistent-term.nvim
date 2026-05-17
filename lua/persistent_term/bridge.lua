@@ -128,29 +128,8 @@ function M.attach(handle, client)
   handle.client = client
   handle._pending_writes = 0
 
-  -- Intercept any subsequent read_start call on this client so that on_input
-  -- can also invoke the callback directly (supports test-side monitoring where
-  -- the caller overrides our read_start after attach).
-  local external_read_cb = nil
-  local pipe_mt = getmetatable(client)
-  local _orig_read_start = pipe_mt.__index.read_start
-  pipe_mt.__index.read_start = function(pipe, cb)
-    if rawequal(pipe, client) then
-      external_read_cb = cb
-    end
-    return _orig_read_start(pipe, cb)
-  end
-  -- Restore the original method on the next event-loop tick so the patch
-  -- window is as narrow as possible.
-  vim.schedule(function()
-    if pipe_mt.__index.read_start ~= _orig_read_start then
-      pipe_mt.__index.read_start = _orig_read_start
-    end
-  end)
-
-  -- Pane -> buffer.  Call the original directly so the intercept wrapper
-  -- above does NOT store this as an external callback.
-  _orig_read_start(client, function(err, data)
+  -- Pane -> buffer.
+  client:read_start(function(err, data)
     if err then
       vim.schedule(function()
         M.detach(handle, "socket read: " .. err)
@@ -188,13 +167,6 @@ function M.attach(handle, client)
         end)
       end
     end)
-    -- If an external read callback was registered on the client after attach
-    -- (e.g., for test-side monitoring), also invoke it with the keystroke data
-    -- so that callers can observe what was forwarded to the pane.
-    if external_read_cb then
-      local cb = external_read_cb
-      vim.schedule(function() cb(nil, data) end)
-    end
   end
 
   if handle._on_input_holder then
