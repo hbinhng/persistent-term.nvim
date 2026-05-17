@@ -30,7 +30,7 @@ describe("persistent_term.tmux builders", function()
     assert.same({
       "tmux", "-L", "persistent-term",
       "list-panes", "-a",
-      "-F", "#{pane_id} #{@pterm_name}",
+      "-F", "#{pane_id}\t#{window_id}\t#{@pterm_name}",
     }, tmux.builders.list_panes())
   end)
 
@@ -123,11 +123,11 @@ describe("persistent_term.tmux executor + helpers", function()
   end)
 
   it("parse_list_panes splits lines into {pane_id, name}", function()
-    local rows = tmux.parse_list_panes("%12 dev\n%13 test\n%14 \n")
+    local rows = tmux.parse_list_panes("%12\t@1\tdev\n%13\t@2\ttest\n%14\t@3\t\n")
     assert.same({
-      { pane_id = "%12", name = "dev" },
-      { pane_id = "%13", name = "test" },
-      { pane_id = "%14", name = "" },
+      { pane_id = "%12", window_id = "@1", name = "dev" },
+      { pane_id = "%13", window_id = "@2", name = "test" },
+      { pane_id = "%14", window_id = "@3", name = "" },
     }, rows)
   end)
 

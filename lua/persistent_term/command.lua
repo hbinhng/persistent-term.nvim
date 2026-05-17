@@ -235,12 +235,14 @@ function M.cmd_open(raw)
     argv = parsed.argv,
   }))
   if not new.ok then
+    handle._closing = true
     server:close()
     pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
     return nil, "tmux new-session failed: " .. new.stderr
   end
   local ids = tmux.parse_new_session_output(new.stdout)
   if not ids then
+    handle._closing = true
     server:close()
     pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
     return nil, "tmux returned unparseable ids: " .. new.stdout
@@ -262,6 +264,7 @@ function M.cmd_open(raw)
     token = token,
   }))
   if not pipe.ok then
+    handle._closing = true
     tmux.run(tmux.builders.kill_pane(ids.pane_id))
     server:close()
     pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
@@ -342,6 +345,7 @@ function M.cmd_attach(target)
 
   local pane_id = row.pane_id
   local name = (row.name ~= "" and row.name) or pane_id
+  local window_id = row.window_id
 
   -- If a pterm://{name} buffer is already attached, focus it.
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
@@ -361,7 +365,7 @@ function M.cmd_attach(target)
   local buf = bridge.create_buffer(name)
   local handle = {
     bufnr = buf.bufnr, chan = buf.chan,
-    name = name, pane_id = pane_id,
+    name = name, pane_id = pane_id, window_id = window_id,
     _on_input_holder = buf._on_input_holder,
   }
 
@@ -402,6 +406,7 @@ function M.cmd_attach(target)
     token = token,
   }))
   if not pipe.ok then
+    handle._closing = true
     server:close()
     pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
     return nil, "tmux pipe-pane failed: " .. pipe.stderr

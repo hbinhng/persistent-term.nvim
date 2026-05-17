@@ -122,7 +122,7 @@ describe("persistent_term.command.cmd_open", function()
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
-      run = function(_) return { ok = true, code = 0, stdout = "%99 dev\n", stderr = "" } end,
+      run = function(_) return { ok = true, code = 0, stdout = "%99\t@9\tdev\n", stderr = "" } end,
     }
     package.loaded["persistent_term.install"] = {
       binary_path = function() return "/tmp/x" end,
@@ -150,7 +150,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
       check_version = function(_) return { ok = true } end,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_)
-        return { ok = true, code = 0, stdout = "%12 dev\n%13 test\n%14 \n", stderr = "" }
+        return { ok = true, code = 0, stdout = "%12\t@1\tdev\n%13\t@2\ttest\n%14\t@3\t\n", stderr = "" }
       end,
     }
     local cmd = require("persistent_term.command")
@@ -165,7 +165,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
       check_version = function(_) return { ok = true } end,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_)
-        return { ok = true, code = 0, stdout = "%12 dev\n%13 dx\n%14 other\n", stderr = "" }
+        return { ok = true, code = 0, stdout = "%12\t@1\tdev\n%13\t@2\tdx\n%14\t@3\tother\n", stderr = "" }
       end,
     }
     local cmd = require("persistent_term.command")
@@ -183,7 +183,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
       run = function(argv)
         table.insert(calls, argv)
         if argv[4] == "list-panes" then
-          return { ok = true, stdout = "%12 dev\n", code = 0, stderr = "" }
+          return { ok = true, stdout = "%12\t@1\tdev\n", code = 0, stderr = "" }
         elseif argv[4] == "capture-pane" then
           return { ok = true, stdout = "history line\n", code = 0, stderr = "" }
         end
@@ -230,7 +230,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(argv)
         if argv[4] == "list-panes" then
-          return { ok = true, stdout = "%12 \n", code = 0, stderr = "" }
+          return { ok = true, stdout = "%12\t@1\t\n", code = 0, stderr = "" }
         elseif argv[4] == "capture-pane" then
           return { ok = true, stdout = "", code = 0, stderr = "" }
         end
@@ -266,7 +266,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true } end,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
-      run = function(_) return { ok = true, stdout = "%99 other\n", code = 0, stderr = "" } end,
+      run = function(_) return { ok = true, stdout = "%99\t@9\tother\n", code = 0, stderr = "" } end,
     }
     package.loaded["persistent_term.install"] = {
       binary_path = function() return "/tmp/h" end,
