@@ -224,13 +224,16 @@ function M.cmd_open(raw)
   -- create time, so the option must be present on the server before new-session.
   if boot_result ~= nil then
     if tmux.is_no_server(boot_result) then
-      -- Start the tmux server with a short-lived init session, then bootstrap.
+      -- The init session runs `sleep 30` (not `sleep 1`): it must outlive
+      -- this function so the server stays alive until our real new-session
+      -- registers the pterm session. 30s is far more than the ~25ms typical
+      -- gap; if the real new-session fails, the ghost dies on its own.
       local init = tmux.run(tmux.builders.new_session({
         session_name = "pterm_init_" .. random_hex(4),
         cols = 80,
         rows = 24,
         cwd = vim.fn.getcwd(),
-        argv = { "sleep", "1" },
+        argv = { "sleep", "30" },
       }))
       if not init.ok then
         return nil, "tmux new-session (server init) failed: " .. init.stderr
