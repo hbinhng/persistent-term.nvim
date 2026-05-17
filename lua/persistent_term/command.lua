@@ -70,7 +70,18 @@ function M.parse_open_args(raw)
       end
       return nil, "empty command after --"
     end
-    return nil, "missing -- separator before command"
+    -- No "--" separator anywhere: treat raw as a name-only invocation
+    -- and let cmd_open substitute the resolved shell as argv.
+    local raw_trim = vim.trim(raw)
+    local tokens = split_tokens(raw_trim)
+    if #tokens ~= 1 then
+      return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. raw_trim
+    end
+    local n = tokens[1]
+    if raw_trim ~= n or #n > 64 or not n:match(NAME_PATTERN) then
+      return nil, "invalid name (must match [A-Za-z0-9_.-]{1,64}): " .. raw_trim
+    end
+    return { name = n, argv = nil }
   end
 
   local name_part = raw:sub(1, sep_pos - 1)

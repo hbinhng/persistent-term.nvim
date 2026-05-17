@@ -14,10 +14,10 @@ describe("persistent_term.command parse_open_args", function()
     assert.same({ "npm", "run", "dev" }, r.argv)
   end)
 
-  it("rejects missing --", function()
+  it("rejects missing -- (multi-token raw)", function()
     local r, err = command.parse_open_args("dev npm run dev")
     assert.is_nil(r)
-    assert.is_truthy(err:match("%-%-"))
+    assert.is_truthy(err:match("invalid name"))
   end)
 
   it("rejects empty argv after --", function()
@@ -45,6 +45,25 @@ describe("persistent_term.command parse_open_args", function()
     local r = command.parse_open_args('dev -- sh -c "echo hi"')
     -- Double quotes are stripped; content is kept as one token.
     assert.same({ "sh", "-c", "echo hi" }, r.argv)
+  end)
+
+  it("parses name-only `dev` as shell-default form (argv = nil)", function()
+    local r, err = command.parse_open_args("dev")
+    assert.is_nil(err)
+    assert.equals("dev", r.name)
+    assert.is_nil(r.argv)
+  end)
+
+  it("name-only form still validates the name pattern", function()
+    local _, err = command.parse_open_args("dev/x")
+    assert.is_truthy(err)
+    local _, err2 = command.parse_open_args("dev'")
+    assert.is_truthy(err2)
+  end)
+
+  it("name-only form rejects multi-token raw (missing --)", function()
+    local _, err = command.parse_open_args("dev npm run")
+    assert.is_truthy(err)
   end)
 end)
 
