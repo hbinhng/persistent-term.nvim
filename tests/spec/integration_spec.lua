@@ -124,6 +124,51 @@ describe("persistent-term integration", function()
       vim.b.persistent_term_pane_id, "#{pane_width}" })
     assert.equals("60", vim.trim(res.stdout))
   end)
+
+  it("PTerm works with no pre-existing tmux server", function()
+    -- before_each already killed the server. Verify list-panes really fails.
+    local probe = run({ "tmux", "-L", "persistent-term", "list-panes", "-a" })
+    assert.is_false(probe.code == 0)
+    assert.is_truthy((probe.stderr or ""):find("no server running", 1, true))
+
+    -- :PTerm against a dead server should NOT surface that error; it should
+    -- spawn the server via new-session and proceed normally. `sleep 1;` avoids
+    -- the well-known race where the pane's command finishes before pipe-pane
+    -- has wired the output into our socket.
+    vim.cmd([[PTerm fresh -- bash -c 'sleep 1; printf hi-fresh; sleep 30']])
+    local bufnr = vim.api.nvim_get_current_buf()
+    assert.is_truthy(wait_until(function()
+      local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+      for _, l in ipairs(lines) do
+        if l:find("hi-fresh", 1, true) then return true end
+      end
+      return false
+    end, 5000))
+  end)
+
+  it("PTermAttach to unknown name with no server reports a clean error", function()
+    -- before_each already killed the server.
+    local probe = run({ "tmux", "-L", "persistent-term", "list-panes", "-a" })
+    assert.is_false(probe.code == 0)
+
+    -- Should NOT propagate "no server running"; should report "unknown pane".
+    -- The command is wired to log.error via init.lua; log writes to vim.notify
+    -- via vim.schedule, so we must drain scheduled callbacks before restoring.
+    local captured = {}
+    local orig_notify = vim.notify
+    vim.notify = function(msg, _level)
+      table.insert(captured, msg)
+    end
+    pcall(vim.cmd, [[PTermAttach ghostname]])
+    vim.wait(100, function() return #captured > 0 end)
+    vim.notify = orig_notify
+
+    local joined = table.concat(captured, "\n")
+    assert.is_truthy(joined:find("unknown pane", 1, true),
+      "expected 'unknown pane' notification, got:\n" .. joined)
+    assert.is_nil(joined:find("no server running", 1, true),
+      "should not propagate 'no server running' to user; got:\n" .. joined)
+  end)
 end)
 
 describe("persistent-term crash recovery", function()
