@@ -42,8 +42,19 @@ end
 
 function M.verify_sha256(path, expected_hex)
   if vim.fn.filereadable(path) ~= 1 then return false end
-  local bytes = table.concat(vim.fn.readfile(path, "b"), "\n")
-  return vim.fn.sha256(bytes) == expected_hex
+  -- vim.fn.sha256() cannot handle binary data containing null bytes (treats it
+  -- as a Vim blob and errors). Use the system sha256sum / openssl instead so
+  -- that the hash is byte-exact and matches what release .sha256 files contain.
+  local hash
+  if vim.fn.executable("sha256sum") == 1 then
+    local out = vim.fn.system({ "sha256sum", path })
+    hash = out:match("^(%x+)")
+  elseif vim.fn.executable("openssl") == 1 then
+    local out = vim.fn.system({ "openssl", "dgst", "-sha256", path })
+    hash = out:match("= (%x+)%s*$")
+  end
+  if not hash then return false end
+  return hash:lower() == expected_hex:lower()
 end
 
 local function asset_name()
@@ -62,8 +73,7 @@ function M.install_from_local(src_path, expected_sha256)
     return false, "sha256 mismatch for " .. src_path
   end
   local dst = M.binary_path()
-  local bytes = table.concat(vim.fn.readfile(src_path, "b"), "\n")
-  vim.fn.writefile(vim.split(bytes, "\n", { plain = true }), dst, "b")
+  vim.fn.writefile(vim.fn.readfile(src_path, "b"), dst, "b")
   vim.fn.system({ "chmod", "0755", dst })
   return true
 end
