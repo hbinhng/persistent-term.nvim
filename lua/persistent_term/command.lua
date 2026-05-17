@@ -475,4 +475,38 @@ function M.cmd_kill(bufnr)
   return true
 end
 
+function M.list()
+  local tmux = require("persistent_term.tmux")
+  local res = tmux.run(tmux.builders.list_panes())
+  if tmux.is_no_server(res) then
+    return {}
+  end
+  if not res.ok then
+    require("persistent_term.log").warn("tmux list-panes failed: " .. (res.stderr or ""))
+    return {}
+  end
+  local rows = tmux.parse_list_panes(res.stdout)
+
+  local attached = {}
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local bname = vim.api.nvim_buf_get_name(bufnr)
+    local match = bname:match("^pterm://([^%s]+)$")
+    if match then attached[match] = true end
+  end
+
+  local out = {}
+  for _, row in ipairs(rows) do
+    if row.name and row.name ~= "" then
+      table.insert(out, {
+        name      = row.name,
+        pane_id   = row.pane_id,
+        window_id = row.window_id,
+        attached  = attached[row.name] == true,
+        status    = row.dead and "dead" or "live",
+      })
+    end
+  end
+  return out
+end
+
 return M

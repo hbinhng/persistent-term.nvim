@@ -446,3 +446,79 @@ describe("persistent_term.command.cmd_kill", function()
     assert.is_false(vim.api.nvim_buf_is_valid(bufnr))
   end)
 end)
+
+describe("persistent_term.command.list", function()
+  local command
+  local orig_list_bufs, orig_buf_get_name
+
+  before_each(function()
+    package.loaded["persistent_term.command"] = nil
+    orig_list_bufs    = vim.api.nvim_list_bufs
+    orig_buf_get_name = vim.api.nvim_buf_get_name
+  end)
+
+  after_each(function()
+    vim.api.nvim_list_bufs    = orig_list_bufs
+    vim.api.nvim_buf_get_name = orig_buf_get_name
+  end)
+
+  local function set_tmux(rows)
+    package.loaded["persistent_term.tmux"] = {
+      builders = { list_panes = function() return { "true" } end },
+      run = function(_) return { ok = true, code = 0, stdout = "", stderr = "" } end,
+      parse_list_panes = function(_) return rows end,
+      is_no_server = function(_) return false end,
+    }
+  end
+
+  local function set_bufs(names)
+    vim.api.nvim_list_bufs    = function() local out = {}; for i = 1, #names do out[i] = i end; return out end
+    vim.api.nvim_buf_get_name = function(i) return names[i] end
+  end
+
+  it("returns rows with attached + status mapped", function()
+    set_tmux({
+      { pane_id = "%12", window_id = "@1", name = "dev",   dead = false },
+      { pane_id = "%13", window_id = "@2", name = "logs",  dead = false },
+      { pane_id = "%14", window_id = "@3", name = "build", dead = true },
+    })
+    set_bufs({ "pterm://dev" })
+    command = require("persistent_term.command")
+    assert.same({
+      { name = "dev",   pane_id = "%12", window_id = "@1", attached = true,  status = "live" },
+      { name = "logs",  pane_id = "%13", window_id = "@2", attached = false, status = "live" },
+      { name = "build", pane_id = "%14", window_id = "@3", attached = false, status = "dead" },
+    }, command.list())
+  end)
+
+  it("returns empty list on fresh tmux server", function()
+    package.loaded["persistent_term.tmux"] = {
+      builders = { list_panes = function() return { "true" } end },
+      run = function(_) return { ok = false, code = 1, stdout = "", stderr = "no server running" } end,
+      parse_list_panes = function(_) return {} end,
+      is_no_server = function(r) return r.stderr == "no server running" end,
+    }
+    set_bufs({})
+    command = require("persistent_term.command")
+    assert.same({}, command.list())
+  end)
+
+  it("skips rows with empty name", function()
+    set_tmux({
+      { pane_id = "%12", window_id = "@1", name = "dev", dead = false },
+      { pane_id = "%99", window_id = "@9", name = "",    dead = false },
+    })
+    set_bufs({})
+    command = require("persistent_term.command")
+    local rows = command.list()
+    assert.equals(1, #rows)
+    assert.equals("dev", rows[1].name)
+  end)
+
+  it("detached buffer is not counted as attached", function()
+    set_tmux({ { pane_id = "%12", window_id = "@1", name = "dev", dead = false } })
+    set_bufs({ "pterm://dev [detached]" })
+    command = require("persistent_term.command")
+    assert.is_false(command.list()[1].attached)
+  end)
+end)
