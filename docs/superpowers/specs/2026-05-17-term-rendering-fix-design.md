@@ -208,3 +208,40 @@ None. All design decisions resolved during brainstorming:
 - Values: hardcoded.
 - Bootstrap timing: inline on every `new-session` (no caching).
 - tmux version: keep min at 3.0; gate `terminal-features` on 3.2+.
+
+## 10. Findings during implementation
+
+### 10.1 `-e TERM=…` on `new-session` does NOT control the child's TERM
+
+The spec (§3, §4.1) framed the per-session `-e TERM=xterm-256color` flag as a redundant safety net that "sets what the child sees" alongside the server-wide `default-terminal` option. Empirical testing during Task 7 implementation refuted this.
+
+**Reproduction:**
+
+```
+tmux -L test kill-server
+# No default-terminal set on the (empty) server.
+tmux -L test new-session -d -s a -e TERM=xterm-256color bash -c 'echo $TERM > /tmp/a; sleep 5'
+cat /tmp/a   # → tmux-256color  (NOT xterm-256color)
+```
+
+```
+tmux -L test kill-server
+tmux -L test new-session -d -s init sleep 1
+tmux -L test set-option -g default-terminal xterm-256color
+tmux -L test new-session -d -s b -e TERM=xterm-256color bash -c 'echo $TERM > /tmp/b; sleep 5'
+cat /tmp/b   # → xterm-256color
+```
+
+Tmux overrides the child process's TERM at session-create time, sourcing it from the `default-terminal` server option, regardless of any `-e TERM=…` argument to `new-session`. The `-e` flag *does* set the session environment (visible via `tmux show-environment -t <session>`), but tmux's pane-spawn logic does not honor that value for TERM specifically.
+
+**Consequence for the design:** the *only* mechanism that fixes the rendering symptom is `default-terminal` set on the server *before* `new-session` runs. The Task 3 `-e TERM=xterm-256color` flag is preserved in the implementation as documentation-of-intent and for tools that inspect session env, but it is *not* the load-bearing mechanism the spec described.
+
+### 10.2 `set-option -g` fails when no tmux server is running
+
+Tmux's compile-time default `default-terminal` (commonly `tmux-256color` on Linux, `screen` on older systems) is what new sessions inherit unless overridden. To override, `set-option -g default-terminal xterm-256color` must run on a *live* server. On a fresh socket (`tmux -L persistent-term` with no server yet), `set-option` returns code 1 with stderr "no server running" — it does NOT auto-start the server like `new-session` does. `tmux start-server` alone also does not actually keep a server alive when there are no sessions.
+
+**Consequence for the design:** §4.2's bootstrap-then-list-panes-then-new-session order requires the server to already exist before bootstrap can succeed. The implementation handles this by detecting the no-server failure from the first bootstrap attempt and using a short-lived `pterm_init_<hex>` session running `sleep 1` to bring the server up, then re-running the bootstrap. The init session has no `@pterm_name` user-option set, so `:PTermList` and the duplicate-name check both filter it out. It self-destructs ~1 second after creation.
+
+### 10.3 Documentation impact
+
+The implementation is correct; the spec's framing was wrong on two points (the `-e` flag's effectiveness and the bootstrap-before-new-session ordering being trivially achievable). Both are documented inline in the code (`run_bootstrap` helper, init-session branch in `cmd_open`, and a multi-line comment in `tmux.builders.new_session` explaining why the `-e` flags persist despite being overridden). This section preserves the empirical record so future readers do not repeat the same wrong assumptions.
