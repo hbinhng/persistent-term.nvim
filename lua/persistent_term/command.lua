@@ -216,26 +216,25 @@ end
 
 local PANE_ID_PATTERN = "^%%[0-9]+$"
 
-local function list_known(tmux)
-  local res = tmux.run(tmux.builders.list_panes())
-  if tmux.is_no_server(res) then
-    return {}
-  end
-  if not res.ok then
-    return {}, "tmux list-panes failed: " .. res.stderr
-  end
-  return tmux.parse_list_panes(res.stdout)
-end
-
 function M.complete_attach(arg_lead, _cmd_line, _cursor_pos)
   local tmux = require("persistent_term.tmux")
-  local rows = list_known(tmux)
+  local gw = gateway()
+  local panes = gw.panes_by_name or {}
   local out = {}
-  for _, row in ipairs(rows) do
-    if row.name ~= "" then
-      table.insert(out, row.name)
+  for name, entry in pairs(panes) do
+    table.insert(out, name)
+    table.insert(out, entry.pane_id)
+  end
+  -- Also query tmux directly as a fallback.
+  local res = tmux.run(tmux.builders.list_panes and tmux.builders.list_panes() or {})
+  if res and res.ok and res.stdout then
+    local rows = tmux.parse_list_panes(res.stdout)
+    for _, row in ipairs(rows) do
+      if row.name ~= "" then
+        table.insert(out, row.name)
+      end
+      table.insert(out, row.pane_id)
     end
-    table.insert(out, row.pane_id)
   end
   if arg_lead == "" then
     return out
@@ -249,155 +248,78 @@ function M.complete_attach(arg_lead, _cmd_line, _cursor_pos)
   return filtered
 end
 
-local function find_pane(rows, target)
-  if target:match(PANE_ID_PATTERN) then
-    for _, r in ipairs(rows) do
-      if r.pane_id == target then
-        return r
-      end
-    end
-  else
-    for _, r in ipairs(rows) do
-      if r.name == target then
-        return r
-      end
-    end
-  end
-  return nil
-end
-
 function M.cmd_attach(target)
   if type(target) ~= "string" or target == "" then
     return nil, "usage: :PTermAttach {name|pane_id}"
   end
-  local tmux = require("persistent_term.tmux")
-  local install = require("persistent_term.install")
-  local bridge = require("persistent_term.bridge")
-  local log = require("persistent_term.log")
-
-  local v = tmux.check_version("3.0")
-  if not v.ok then
-    return nil, v.reason
-  end
-  if not install.is_installed() then
-    return nil, "helper binary not installed; run :PTermInstall"
+  local gw = gateway()
+  local ok, err = gw:ensure_started(5000)
+  if not ok then
+    return nil, err
   end
 
-  local list = tmux.run(tmux.builders.list_panes())
-  local rows
-  if tmux.is_no_server(list) then
-    rows = {}
-  elseif not list.ok then
-    return nil, "tmux list-panes failed: " .. list.stderr
+  -- Resolve target -> { pane_id, window_id, name }.
+  local resolved
+  if target:match(PANE_ID_PATTERN) then
+    -- Pane id given; we need to know its window id. Issue list-windows.
+    local result = { done = false }
+    gw:send_cmd("list-windows -t pterm -F '#{window_id}\t#{pane_id}\t#{@pterm_name}\t#{pane_dead}'", function(r)
+      result.r = r
+      result.done = true
+    end)
+    vim.wait(2000, function()
+      return result.done
+    end, 20)
+    if not result.r or not result.r.ok then
+      return nil, "tmux list-windows failed: " .. ((result.r and result.r.stderr) or "?")
+    end
+    local rows = require("persistent_term.tmux").parse_list_panes(result.r.stdout)
+    for _, row in ipairs(rows) do
+      if row.pane_id == target then
+        resolved = { pane_id = row.pane_id, window_id = row.window_id, name = row.name ~= "" and row.name or target }
+        break
+      end
+    end
   else
-    rows = tmux.parse_list_panes(list.stdout)
+    local e = gw:get_pane_by_name(target)
+    if e then
+      resolved = { pane_id = e.pane_id, window_id = e.window_id, name = target }
+    end
   end
-  local row = find_pane(rows, target)
-  if not row then
+  if not resolved then
     return nil, "unknown pane: " .. target
   end
 
-  local pane_id = row.pane_id
-  local name = (row.name ~= "" and row.name) or pane_id
-  local window_id = row.window_id
-
-  -- If a pterm://{name} buffer is already attached, focus it.
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) then
-      local bname = vim.api.nvim_buf_get_name(bufnr)
-      if bname == "pterm://" .. name then
-        vim.cmd.buffer(bufnr)
-        return { bufnr = bufnr, pane_id = pane_id, name = name }
-      end
+  -- If a buffer already exists for this name, just focus it.
+  for _, b in ipairs(vim.api.nvim_list_bufs()) do
+    if vim.api.nvim_buf_is_loaded(b) and vim.api.nvim_buf_get_name(b) == "pterm://" .. resolved.name then
+      vim.cmd.buffer(b)
+      return { bufnr = b, pane_id = resolved.pane_id, window_id = resolved.window_id, name = resolved.name }
     end
   end
 
-  local dir_for_socket = function()
-    local xdg = vim.env.XDG_RUNTIME_DIR
-    if xdg and xdg ~= "" then
-      return xdg .. "/persistent-term"
-    end
-    return "/tmp/persistent-term-" .. vim.fn.getpid()
-  end
-  local ensure_runtime_dir = function(dir)
-    vim.fn.mkdir(dir, "p", "0700")
-  end
-  local random_hex = function(nbytes)
-    local uv = vim.uv or vim.loop
-    local raw = uv.random and uv.random(nbytes) or nil
-    if not raw then
-      math.randomseed(os.time())
-      local t = {}
-      for _ = 1, nbytes do
-        table.insert(t, string.char(math.random(0, 255)))
-      end
-      raw = table.concat(t)
-    end
-    return (raw:gsub(".", function(c)
-      return string.format("%02x", string.byte(c))
-    end))
-  end
-
-  local dir = dir_for_socket()
-  ensure_runtime_dir(dir)
-  local socket_path = dir .. "/" .. random_hex(16) .. ".sock"
-  local token = random_hex(32)
-  local buf = bridge.create_buffer(name)
+  local bridge = require("persistent_term.bridge")
+  local buf = bridge.create_buffer(resolved.name)
   local handle = {
     bufnr = buf.bufnr,
     chan = buf.chan,
-    name = name,
-    pane_id = pane_id,
-    window_id = window_id,
+    name = resolved.name,
+    pane_id = resolved.pane_id,
+    window_id = resolved.window_id,
     _on_input_holder = buf._on_input_holder,
   }
+  bridge.attach(handle, gw, resolved.pane_id, resolved.window_id)
+  vim.b[buf.bufnr].persistent_term_pane_id = resolved.pane_id
+  vim.b[buf.bufnr].persistent_term_window_id = resolved.window_id
 
   -- Replay scrollback.
-  local cap = tmux.run(tmux.builders.capture_pane(pane_id))
-  if cap.ok and cap.stdout and cap.stdout ~= "" then
-    bridge.chan_send_history(handle, cap.stdout)
-  end
-
-  local server
-  server = bridge.start_server({
-    socket_path = socket_path,
-    token = token,
-    on_attach = function(client)
-      handle._attached = true
-      bridge.attach(handle, client)
-    end,
-    on_error = function(reason)
-      log.warn("bridge: " .. reason)
-    end,
-  })
-  handle._server = server
-
-  vim.defer_fn(function()
-    if handle._attached or handle._closing then
-      return
+  gw:send_cmd("capture-pane -p -e -J -t " .. resolved.pane_id, function(r)
+    if r.ok and r.stdout and r.stdout ~= "" then
+      vim.schedule(function()
+        bridge.chan_send_history(handle, r.stdout)
+      end)
     end
-    log.error(string.format("handshake timeout while attaching to %s", pane_id))
-    bridge.detach(handle, "handshake timeout")
-    if vim.api.nvim_buf_is_valid(handle.bufnr) then
-      vim.api.nvim_buf_delete(handle.bufnr, { force = true })
-    end
-  end, 2000)
-
-  local helper = install.binary_path()
-  local pipe = tmux.run(tmux.builders.pipe_pane({
-    pane_id = pane_id,
-    bin_path = helper,
-    socket_path = socket_path,
-    token = token,
-  }))
-  if not pipe.ok then
-    handle._closing = true
-    server:close()
-    pcall(vim.api.nvim_buf_delete, buf.bufnr, { force = true })
-    return nil, "tmux pipe-pane failed: " .. pipe.stderr
-  end
-
-  vim.b[buf.bufnr].persistent_term_pane_id = pane_id
+  end)
   bridge.install_buffer_hook(handle)
   return handle
 end
@@ -408,14 +330,13 @@ function M.cmd_kill(bufnr)
   if not name:match("^pterm://") then
     return false, "not a persistent-term buffer"
   end
-  local pane_id = vim.b[bufnr].persistent_term_pane_id
-  local handle = {
-    bufnr = bufnr,
-    pane_id = pane_id,
-    name = vim.b[bufnr].persistent_term_name,
-  }
-  local bridge = require("persistent_term.bridge")
-  bridge.kill(handle)
+  local window_id = vim.b[bufnr].persistent_term_window_id
+  if window_id then
+    gateway():send_cmd("kill-window -t " .. window_id, function() end)
+  end
+  if vim.api.nvim_buf_is_valid(bufnr) then
+    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+  end
   return true
 end
 

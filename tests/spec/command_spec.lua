@@ -186,3 +186,68 @@ describe("persistent_term.command cmd_open via gateway", function()
     assert.is_truthy(errors[1]:find("no current client"))
   end)
 end)
+
+describe("persistent_term.command cmd_kill via gateway", function()
+  local command, fake_gw, bufnr
+
+  before_each(function()
+    fake_gw = {
+      state_ = "ready",
+      version_ = "3.4",
+      pending = {},
+      subscribed = {},
+      panes_by_name = {},
+    }
+    function fake_gw:state()
+      return self.state_
+    end
+    function fake_gw:version()
+      return self.version_
+    end
+    function fake_gw:ensure_started(_)
+      return true
+    end
+    function fake_gw:send_cmd(c, cb)
+      table.insert(self.pending, { cmd = c, cb = cb })
+    end
+    function fake_gw:send_keys() end
+    function fake_gw:subscribe(p, w, b, c)
+      self.subscribed[p] = { wid = w, on_bytes = b, on_close = c }
+    end
+    function fake_gw:unsubscribe(p)
+      self.subscribed[p] = nil
+    end
+    function fake_gw:register_pane(n, p, w)
+      self.panes_by_name[n] = { pane_id = p, window_id = w }
+    end
+    function fake_gw:get_pane_by_name(n)
+      return self.panes_by_name[n]
+    end
+    function fake_gw:forget_pane_by_window(_) end
+    package.loaded["persistent_term.gateway"] = {
+      singleton = function()
+        return fake_gw
+      end,
+    }
+    package.loaded["persistent_term.command"] = nil
+    command = require("persistent_term.command")
+    bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(bufnr, "pterm://kf")
+    vim.b[bufnr].persistent_term_pane_id = "%5"
+    vim.b[bufnr].persistent_term_window_id = "@5"
+  end)
+
+  it("issues kill-window for the stored window_id", function()
+    local ok = command.cmd_kill(bufnr)
+    assert.is_true(ok)
+    assert.is_truthy(fake_gw.pending[1])
+    assert.equals("kill-window -t @5", fake_gw.pending[1].cmd)
+  end)
+
+  it("rejects buffers that are not pterm:// buffers", function()
+    local b = vim.api.nvim_create_buf(false, true)
+    local ok, err = command.cmd_kill(b)
+    assert.is_false(ok)
+    assert.is_truthy(err:find("not a persistent%-term buffer"))
+  end)
+end)
