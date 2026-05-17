@@ -460,4 +460,66 @@ describe("persistent-term integration", function()
     assert.is_truthy(found, "RESPONSE sentinel never appeared in the buffer")
     assert.equals(1, rawget(_G, "_pterm_cpr_count"))
   end)
+
+  it("%window-close event renames the buffer to [detached]", function()
+    vim.cmd([[PTerm killme -- bash -c 'sleep 300']])
+    local bufnr = vim.api.nvim_get_current_buf()
+    -- Wait for the pane to actually be alive.
+    assert.is_truthy(wait_until(function()
+      return vim.b[bufnr].persistent_term_pane_id ~= nil
+    end, 5000))
+    local window_id = vim.b[bufnr].persistent_term_window_id
+    assert.is_truthy(window_id, "expected persistent_term_window_id to be set")
+    -- Kill the tmux window directly (bypassing :PTermKill which deletes the
+    -- buffer first). The %window-close notification from tmux will fire the
+    -- on_close callback -> bridge.detach -> buffer rename to [detached].
+    run({ "tmux", "-L", "persistent-term", "kill-window", "-t", window_id })
+    assert.is_truthy(wait_until(function()
+      if not vim.api.nvim_buf_is_valid(bufnr) then
+        return false
+      end
+      local name = vim.api.nvim_buf_get_name(bufnr)
+      return name:find("%[detached%]") ~= nil
+    end, 5000))
+  end)
+
+  it("server persistence: detach + re-attach rediscovers existing panes", function()
+    vim.cmd([[PTerm persist -- bash -c 'sleep 300']])
+    local bufnr = vim.api.nvim_get_current_buf()
+    assert.is_truthy(wait_until(function()
+      return vim.b[bufnr].persistent_term_pane_id ~= nil
+    end, 5000))
+    -- Detach the gateway; tmux server keeps running with the pane.
+    local gw_mod = require("persistent_term.gateway")
+    local gw = gw_mod.singleton()
+    gw:detach()
+    assert.is_truthy(wait_until(function()
+      return gw:state() == "stopped"
+    end, 5000))
+    -- Reset the singleton so the next gateway.singleton() creates a fresh one.
+    gw_mod._reset_singleton_for_test()
+    -- Start the fresh gateway; bootstrap issues list-windows to rediscover panes.
+    local new_gw = gw_mod.singleton()
+    local started = new_gw:ensure_started(5000)
+    assert.is_truthy(started, "new gateway failed to reach ready state")
+    -- Wait for the pane map to repopulate (bootstrap's refresh_pane_map).
+    assert.is_truthy(wait_until(function()
+      local rows = require("persistent_term").list()
+      for _, r in ipairs(rows) do
+        if r.name == "persist" then
+          return true
+        end
+      end
+      return false
+    end, 5000))
+    -- Confirm.
+    local list = require("persistent_term").list()
+    local found = false
+    for _, r in ipairs(list) do
+      if r.name == "persist" then
+        found = true
+      end
+    end
+    assert.is_true(found)
+  end)
 end)
