@@ -144,6 +144,20 @@ local function name_in_use(rows, name)
   return nil
 end
 
+function M.resolve_shell()
+  local shell = vim.env.SHELL
+  if shell and shell ~= "" and vim.fn.executable(shell) == 1 then
+    return shell
+  end
+  if vim.fn.executable("/bin/sh") == 1 then
+    return "/bin/sh"
+  end
+  error(string.format(
+    "no usable shell: $SHELL=%q, /bin/sh missing",
+    shell or ""
+  ))
+end
+
 function M.cmd_open(raw)
   local parsed, perr = M.parse_open_args(raw)
   if not parsed then

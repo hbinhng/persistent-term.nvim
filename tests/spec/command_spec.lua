@@ -286,6 +286,58 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
   end)
 end)
 
+describe("persistent_term.command.resolve_shell", function()
+  local command
+  local orig_env_shell, orig_executable
+
+  before_each(function()
+    package.loaded["persistent_term.command"] = nil
+    command = require("persistent_term.command")
+    orig_env_shell = vim.env.SHELL
+    orig_executable = vim.fn.executable
+  end)
+
+  after_each(function()
+    vim.env.SHELL = orig_env_shell
+    vim.fn.executable = orig_executable
+  end)
+
+  it("returns $SHELL when set and executable", function()
+    vim.env.SHELL = "/usr/bin/fish"
+    vim.fn.executable = function(p)
+      if p == "/usr/bin/fish" then return 1 end
+      return 0
+    end
+    assert.equals("/usr/bin/fish", command.resolve_shell())
+  end)
+
+  it("falls back to /bin/sh when $SHELL is not executable", function()
+    vim.env.SHELL = "/nonexistent/zsh"
+    vim.fn.executable = function(p)
+      if p == "/bin/sh" then return 1 end
+      return 0
+    end
+    assert.equals("/bin/sh", command.resolve_shell())
+  end)
+
+  it("falls back to /bin/sh when $SHELL is unset", function()
+    vim.env.SHELL = nil
+    vim.fn.executable = function(p)
+      if p == "/bin/sh" then return 1 end
+      return 0
+    end
+    assert.equals("/bin/sh", command.resolve_shell())
+  end)
+
+  it("errors when neither $SHELL nor /bin/sh is usable", function()
+    vim.env.SHELL = "/missing/shell"
+    vim.fn.executable = function(_) return 0 end
+    local ok, err = pcall(command.resolve_shell)
+    assert.is_false(ok)
+    assert.is_truthy(tostring(err):match("no usable shell"))
+  end)
+end)
+
 describe("persistent_term.command.cmd_kill", function()
   before_each(function()
     package.loaded["persistent_term.command"] = nil
