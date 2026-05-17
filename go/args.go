@@ -36,6 +36,7 @@ func parseArgs(argv []string) (Args, error) {
 	if a.Token == "" {
 		return Args{}, errMissingToken
 	}
+	a.SocketPath = filepath.Clean(a.SocketPath)
 	if !filepath.IsAbs(a.SocketPath) || !isSafeSocketPath(a.SocketPath) {
 		return Args{}, errUnsafeSocketPath
 	}
@@ -45,7 +46,9 @@ func parseArgs(argv []string) (Args, error) {
 func isSafeSocketPath(p string) bool {
 	safe := []string{"/run/user/", "/tmp/"}
 	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-		safe = append(safe, strings.TrimRight(xdg, "/")+"/")
+		if trimmed := strings.TrimRight(xdg, "/"); trimmed != "" {
+			safe = append(safe, trimmed+"/")
+		}
 	}
 	for _, prefix := range safe {
 		if strings.HasPrefix(p, prefix) {

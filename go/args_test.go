@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func unsetXDG(t *testing.T) {
+	t.Helper()
+	prev, had := os.LookupEnv("XDG_RUNTIME_DIR")
+	os.Unsetenv("XDG_RUNTIME_DIR")
+	t.Cleanup(func() {
+		if had {
+			os.Setenv("XDG_RUNTIME_DIR", prev)
+		}
+	})
+}
+
 func TestParseArgsHappyPath(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
 	args, err := parseArgs([]string{
@@ -45,7 +56,7 @@ func TestParseArgsRelativeSocketPathRejected(t *testing.T) {
 }
 
 func TestParseArgsUnsafeAbsolutePathRejected(t *testing.T) {
-	os.Unsetenv("XDG_RUNTIME_DIR")
+	unsetXDG(t)
 	_, err := parseArgs([]string{"--socket", "/etc/passwd", "--token", "x"})
 	if !errors.Is(err, errUnsafeSocketPath) {
 		t.Errorf("err = %v, want errUnsafeSocketPath", err)
@@ -53,9 +64,36 @@ func TestParseArgsUnsafeAbsolutePathRejected(t *testing.T) {
 }
 
 func TestParseArgsTmpAllowed(t *testing.T) {
-	os.Unsetenv("XDG_RUNTIME_DIR")
+	unsetXDG(t)
 	_, err := parseArgs([]string{"--socket", "/tmp/persistent-term-1000/abc.sock", "--token", "x"})
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestParseArgsRejectsPathTraversal(t *testing.T) {
+	unsetXDG(t)
+	_, err := parseArgs([]string{"--socket", "/tmp/../etc/passwd", "--token", "x"})
+	if !errors.Is(err, errUnsafeSocketPath) {
+		t.Errorf("err = %v, want errUnsafeSocketPath", err)
+	}
+}
+
+func TestParseArgsRejectsRootXDG(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "/")
+	_, err := parseArgs([]string{"--socket", "/etc/passwd", "--token", "x"})
+	if !errors.Is(err, errUnsafeSocketPath) {
+		t.Errorf("err = %v, want errUnsafeSocketPath", err)
+	}
+}
+
+func TestParseArgsCleansSocketPath(t *testing.T) {
+	unsetXDG(t)
+	args, err := parseArgs([]string{"--socket", "/tmp/foo/../bar.sock", "--token", "x"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if args.SocketPath != "/tmp/bar.sock" {
+		t.Errorf("SocketPath = %q, want /tmp/bar.sock", args.SocketPath)
 	}
 }
