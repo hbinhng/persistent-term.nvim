@@ -86,3 +86,68 @@ describe("codec.shell_escape", function()
     assert.equals([['a\b']], codec.shell_escape([[a\b]]))
   end)
 end)
+
+describe("codec.is_libvterm_response", function()
+  local codec
+  before_each(function()
+    package.loaded["persistent_term.codec"] = nil
+    codec = require("persistent_term.codec")
+  end)
+
+  it("strips a CPR response", function()
+    -- \e[24;80R = cursor at row 24 col 80
+    local cleaned = codec.is_libvterm_response("\27[24;80R")
+    assert.equals("", cleaned)
+  end)
+
+  it("strips a DA1 response (CSI ? ... c)", function()
+    local cleaned = codec.is_libvterm_response("\27[?1;2c")
+    assert.equals("", cleaned)
+  end)
+
+  it("strips a DA2 response (CSI > ... c)", function()
+    local cleaned = codec.is_libvterm_response("\27[>1;100;0c")
+    assert.equals("", cleaned)
+  end)
+
+  it("strips a DSR-OK response (CSI 0 n)", function()
+    local cleaned = codec.is_libvterm_response("\27[0n")
+    assert.equals("", cleaned)
+  end)
+
+  it("keeps an arrow-key sequence (CSI A)", function()
+    assert.equals("\27[A", codec.is_libvterm_response("\27[A"))
+  end)
+
+  it("keeps a function-key sequence (CSI 15 ~)", function()
+    assert.equals("\27[15~", codec.is_libvterm_response("\27[15~"))
+  end)
+
+  it("keeps a modified-key sequence (CSI 1 ; 5 A = Ctrl-Up)", function()
+    assert.equals("\27[1;5A", codec.is_libvterm_response("\27[1;5A"))
+  end)
+
+  it("keeps plain text", function()
+    assert.equals("hello", codec.is_libvterm_response("hello"))
+  end)
+
+  it("keeps a SS3 function key (\\eOP = F1)", function()
+    -- \eO sequences are NOT CSI and must pass through.
+    assert.equals("\27OP", codec.is_libvterm_response("\27OP"))
+  end)
+
+  it("strips a response embedded between user keystrokes", function()
+    local data = "ab\27[24;80Rcd"
+    assert.equals("abcd", codec.is_libvterm_response(data))
+  end)
+
+  it("handles an incomplete CSI at the buffer tail (no final byte)", function()
+    -- Conservatively pass through; the caller will buffer and retry.
+    local data = "ab\27["
+    assert.equals("ab\27[", codec.is_libvterm_response(data))
+  end)
+
+  it("keeps a bare ESC followed by non-[", function()
+    assert.equals("\27a", codec.is_libvterm_response("\27a"))
+  end)
+end)
