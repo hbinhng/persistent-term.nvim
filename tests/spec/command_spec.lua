@@ -273,6 +273,50 @@ describe("persistent_term.command.cmd_open", function()
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end)
 
+  it("aborts cmd_open when bootstrap set-option default-terminal fails", function()
+    local create_buffer_called = false
+    local new_session_called = false
+    local fake_builders = require("persistent_term.tmux").builders
+    package.loaded["persistent_term.tmux"] = {
+      builders = fake_builders,
+      check_version = function(_) return { ok = true, version = "3.4" } end,
+      version_at_least = require("persistent_term.tmux").version_at_least,
+      is_no_server = require("persistent_term.tmux").is_no_server,
+      parse_list_panes = require("persistent_term.tmux").parse_list_panes,
+      parse_new_session_output = require("persistent_term.tmux").parse_new_session_output,
+      run = function(argv)
+        local sub = argv[4]
+        if sub == "set-option" and argv[6] == "default-terminal" then
+          return { ok = false, code = 1, stdout = "", stderr = "server died" }
+        elseif sub == "new-session" then
+          new_session_called = true
+          return { ok = true, code = 0, stdout = "$1\t%10\t@2\n", stderr = "" }
+        end
+        return { ok = true, code = 0, stdout = "", stderr = "" }
+      end,
+    }
+    package.loaded["persistent_term.install"] = {
+      binary_path = function() return "/tmp/persistent-term-pipe" end,
+      is_installed = function() return true end,
+    }
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(_)
+        create_buffer_called = true
+        local bufnr = vim.api.nvim_create_buf(true, true)
+        return { bufnr = bufnr, chan = -1, _on_input_holder = { _on_input = function() end } }
+      end,
+    }
+
+    command = require("persistent_term.command")
+    local handle, err = command.cmd_open("dev -- bash -c hi")
+    assert.is_nil(handle)
+    assert.is_truthy(err)
+    assert.is_truthy(err:match("set%-option default%-terminal failed"))
+    assert.is_truthy(err:match("server died"))
+    assert.is_false(create_buffer_called, "buffer must not be created when bootstrap fails")
+    assert.is_false(new_session_called, "new-session must not be called when bootstrap fails")
+  end)
+
   it("substitutes resolved shell argv when parse returns nil argv", function()
     local recorded_argv
     package.loaded["persistent_term.tmux"] = {

@@ -200,10 +200,19 @@ function M.cmd_open(raw)
   end
 
   local boot = tmux.run(tmux.builders.set_server_option("default-terminal", "xterm-256color"))
+  if not boot.ok and not tmux.is_no_server(boot) then
+    return nil, "tmux set-option default-terminal failed: " .. boot.stderr
+  end
   if tmux.version_at_least(v.version, "3.2") then
     boot = tmux.run(tmux.builders.set_server_option("terminal-features", "xterm-256color:RGB"))
+    if not boot.ok and not tmux.is_no_server(boot) then
+      return nil, "tmux set-option terminal-features failed: " .. boot.stderr
+    end
   end
   boot = tmux.run(tmux.builders.set_server_env("COLORTERM", "truecolor"))
+  if not boot.ok and not tmux.is_no_server(boot) then
+    return nil, "tmux set-environment COLORTERM failed: " .. boot.stderr
+  end
 
   local list = tmux.run(tmux.builders.list_panes())
   -- A fresh tmux server (no sessions yet) causes list-panes -a to fail with
