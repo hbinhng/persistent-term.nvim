@@ -23,6 +23,7 @@ function M.new(opts)
   self._block_lines = {}
   -- pane_id -> { on_bytes, on_close, window_id }
   self._subs = {}
+  self._version = nil -- string, populated by bootstrap or _set_version_for_test
   return self
 end
 
@@ -125,11 +126,14 @@ function Gateway:_handle_line(line)
 
   if line == "%exit" or line:match("^%%exit ") then
     self._state = "stopped"
-    -- Fail any pending callbacks.
     for _, p in ipairs(self._pending) do
       pcall(p.cb, { ok = false, stderr = "control mode exited" })
     end
     self._pending = {}
+    for pane_id, sub in pairs(self._subs) do
+      pcall(sub.on_close)
+      self._subs[pane_id] = nil
+    end
     return
   end
 
@@ -177,6 +181,33 @@ end
 
 function Gateway:unsubscribe(pane_id)
   self._subs[pane_id] = nil
+end
+
+function Gateway:version()
+  return self._version
+end
+
+function Gateway:_set_version_for_test(v)
+  self._version = v
+end
+
+function Gateway:send_keys(pane_id, bytes)
+  if bytes == "" then
+    return
+  end
+  local codec = require("persistent_term.codec")
+  local cmds = codec.encode_send_keys(bytes, pane_id, self._version or "3.0")
+  for _, c in ipairs(cmds) do
+    self._transport.write(c .. "\n")
+  end
+end
+
+function Gateway:detach()
+  if self._state == "stopped" or self._state == "detaching" then
+    return
+  end
+  self._state = "detaching"
+  self._transport.write("detach\n")
 end
 
 return M

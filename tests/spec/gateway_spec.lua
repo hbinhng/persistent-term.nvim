@@ -287,3 +287,94 @@ describe("gateway subscribers", function()
     assert.same({ "good" }, b)
   end)
 end)
+
+describe("gateway.send_keys", function()
+  local gateway
+  before_each(function()
+    package.loaded["persistent_term.gateway"] = nil
+    gateway = require("persistent_term.gateway")
+  end)
+
+  local function ready_gw_with_version(t, version)
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    gw:_set_version_for_test(version)
+    return gw
+  end
+
+  it("writes one send-keys command for a printable run on tmux 3.4", function()
+    local t = make_fake_transport()
+    local gw = ready_gw_with_version(t, "3.4")
+    -- Reset the captured writes so we only see what send_keys produced.
+    t.written = {}
+    gw:send_keys("%1", "hi")
+    assert.same({ "send-keys -lt %1 'hi'\n" }, t.written)
+  end)
+
+  it("writes one literal-byte command for Enter on tmux 3.0a", function()
+    local t = make_fake_transport()
+    local gw = ready_gw_with_version(t, "3.0a")
+    t.written = {}
+    gw:send_keys("%1", "\r")
+    assert.same({ "send-keys -H -t %1 0d\n" }, t.written)
+  end)
+
+  it("writes three commands for ESC [ D on tmux 3.4", function()
+    local t = make_fake_transport()
+    local gw = ready_gw_with_version(t, "3.4")
+    t.written = {}
+    gw:send_keys("%1", "\27[D")
+    assert.same({
+      "send-keys -H -t %1 1b\n",
+      "send-keys -t %1 0x5b\n",
+      "send-keys -lt %1 'D'\n",
+    }, t.written)
+  end)
+
+  it("does nothing for empty input", function()
+    local t = make_fake_transport()
+    local gw = ready_gw_with_version(t, "3.4")
+    t.written = {}
+    gw:send_keys("%1", "")
+    assert.same({}, t.written)
+  end)
+end)
+
+describe("gateway.detach", function()
+  local gateway
+  before_each(function()
+    package.loaded["persistent_term.gateway"] = nil
+    gateway = require("persistent_term.gateway")
+  end)
+
+  it("writes 'detach' and transitions to detaching, then stopped on %exit", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    t.written = {}
+    gw:detach()
+    assert.same({ "detach\n" }, t.written)
+    assert.equals("detaching", gw:state())
+    t.feed("%exit\n")
+    assert.equals("stopped", gw:state())
+  end)
+
+  it("fires on_close for every active subscriber on %exit", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    local closed = {}
+    gw:subscribe("%1", "@1", function() end, function()
+      table.insert(closed, "%1")
+    end)
+    gw:subscribe("%2", "@2", function() end, function()
+      table.insert(closed, "%2")
+    end)
+    t.feed("%exit\n")
+    table.sort(closed)
+    assert.same({ "%1", "%2" }, closed)
+  end)
+end)
