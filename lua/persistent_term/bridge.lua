@@ -117,8 +117,9 @@ function M.resize_to(handle, cols, rows)
         return
       end
       local cmd
+      local tmux = require("persistent_term.tmux")
       local v = handle.gateway:version() or "3.0"
-      if v:match("^3%.[4-9]") or v:match("^[4-9]") then
+      if tmux.version_at_least(v, "3.4") then
         cmd = string.format("refresh-client -C %s:%dx%d", handle.window_id, size.cols, size.rows)
       else
         cmd = string.format("resize-window -t %s -x %d -y %d", handle.window_id, size.cols, size.rows)

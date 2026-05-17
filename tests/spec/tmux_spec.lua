@@ -16,30 +16,53 @@ describe("persistent_term.tmux builders", function()
       argv = { "npm", "run", "dev" },
     })
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "new-session", "-d",
-      "-s", "pterm_abc",
-      "-x", "120", "-y", "32",
-      "-c", "/home/u",
-      "-e", "TERM=xterm-256color",
-      "-e", "COLORTERM=truecolor",
-      "-P", "-F", "#{session_id}\t#{pane_id}\t#{window_id}",
-      "--", "npm", "run", "dev",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "new-session",
+      "-d",
+      "-s",
+      "pterm_abc",
+      "-x",
+      "120",
+      "-y",
+      "32",
+      "-c",
+      "/home/u",
+      "-e",
+      "TERM=xterm-256color",
+      "-e",
+      "COLORTERM=truecolor",
+      "-P",
+      "-F",
+      "#{session_id}\t#{pane_id}\t#{window_id}",
+      "--",
+      "npm",
+      "run",
+      "dev",
     }, argv)
   end)
 
   it("list_panes builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "list-panes", "-a",
-      "-F", "#{pane_id}\t#{window_id}\t#{@pterm_name}\t#{pane_dead}",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "list-panes",
+      "-a",
+      "-F",
+      "#{pane_id}\t#{window_id}\t#{@pterm_name}\t#{pane_dead}",
     }, tmux.builders.list_panes())
   end)
 
   it("kill_pane builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "kill-pane", "-t", "%12",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "kill-pane",
+      "-t",
+      "%12",
     }, tmux.builders.kill_pane("%12"))
   end)
 
@@ -51,8 +74,13 @@ describe("persistent_term.tmux builders", function()
       token = "deadbeef",
     })
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "pipe-pane", "-t", "%12", "-IO",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "pipe-pane",
+      "-t",
+      "%12",
+      "-IO",
       "'/home/u/.local/share/nvim/persistent-term/bin/persistent-term-pipe'"
         .. " --socket '/run/user/1000/persistent-term/abc.sock'"
         .. " --token 'deadbeef'",
@@ -80,48 +108,86 @@ describe("persistent_term.tmux builders", function()
 
   it("capture_pane builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "capture-pane", "-p", "-e", "-J",
-      "-S", "-", "-E", "-",
-      "-t", "%12",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "capture-pane",
+      "-p",
+      "-e",
+      "-J",
+      "-S",
+      "-",
+      "-E",
+      "-",
+      "-t",
+      "%12",
     }, tmux.builders.capture_pane("%12"))
   end)
 
   it("resize_pane builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "resize-pane", "-t", "%12",
-      "-x", "80", "-y", "24",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "resize-pane",
+      "-t",
+      "%12",
+      "-x",
+      "80",
+      "-y",
+      "24",
     }, tmux.builders.resize_pane("%12", 80, 24))
   end)
 
   it("set_pane_option builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "set-option", "-p", "-t", "%12",
-      "@pterm_name", "dev",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "set-option",
+      "-p",
+      "-t",
+      "%12",
+      "@pterm_name",
+      "dev",
     }, tmux.builders.set_pane_option("%12", "@pterm_name", "dev"))
   end)
 
   it("set_window_option builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "set-option", "-w", "-t", "@7",
-      "remain-on-exit", "on",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "set-option",
+      "-w",
+      "-t",
+      "@7",
+      "remain-on-exit",
+      "on",
     }, tmux.builders.set_window_option("@7", "remain-on-exit", "on"))
   end)
 
   it("set_server_option builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "set-option", "-g", "default-terminal", "xterm-256color",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "set-option",
+      "-g",
+      "default-terminal",
+      "xterm-256color",
     }, tmux.builders.set_server_option("default-terminal", "xterm-256color"))
   end)
 
   it("set_server_env builds correct argv", function()
     assert.same({
-      "tmux", "-L", "persistent-term",
-      "set-environment", "-g", "COLORTERM", "truecolor",
+      "tmux",
+      "-L",
+      "persistent-term",
+      "set-environment",
+      "-g",
+      "COLORTERM",
+      "truecolor",
     }, tmux.builders.set_server_env("COLORTERM", "truecolor"))
   end)
 
@@ -139,13 +205,11 @@ describe("persistent_term.tmux executor + helpers", function()
   end)
 
   it("parse_list_panes splits 4-field rows", function()
-    local rows = tmux.parse_list_panes(
-      "%12\t@1\tdev\t0\n%13\t@2\ttest\t1\n%14\t@3\t\t0\n"
-    )
+    local rows = tmux.parse_list_panes("%12\t@1\tdev\t0\n%13\t@2\ttest\t1\n%14\t@3\t\t0\n")
     assert.same({
-      { pane_id = "%12", window_id = "@1", name = "dev",  dead = false },
+      { pane_id = "%12", window_id = "@1", name = "dev", dead = false },
       { pane_id = "%13", window_id = "@2", name = "test", dead = true },
-      { pane_id = "%14", window_id = "@3", name = "",     dead = false },
+      { pane_id = "%14", window_id = "@3", name = "", dead = false },
     }, rows)
   end)
 
@@ -166,6 +230,10 @@ describe("persistent_term.tmux executor + helpers", function()
     assert.is_true(tmux.version_at_least("3.1", "3.0"))
     assert.is_true(tmux.version_at_least("3.0a", "3.0"))
     assert.is_false(tmux.version_at_least("2.9", "3.0"))
+  end)
+
+  it("returns true when have has a two-digit minor and want has a single-digit minor", function()
+    assert.is_true(tmux.version_at_least("3.10", "3.4"))
   end)
 
   it("run executes argv and returns ok/stdout/stderr/code", function()
