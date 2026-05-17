@@ -121,6 +121,12 @@ function M.run(argv, opts)
   }
 end
 
+function M.is_no_server(res)
+  if res.ok or not res.stderr then return false end
+  return (res.stderr:find("No such file or directory", 1, true)
+    or res.stderr:find("no server running", 1, true)) ~= nil
+end
+
 function M.parse_list_panes(stdout)
   local rows = {}
   for line in stdout:gmatch("[^\n]+") do

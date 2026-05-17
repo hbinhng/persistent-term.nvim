@@ -144,15 +144,6 @@ local function name_in_use(rows, name)
   return nil
 end
 
--- A fresh tmux server (no sessions yet) makes list-panes fail with one of
--- these messages. Treat as empty pane list rather than a hard error.
-local function is_no_server(res)
-  return not res.ok
-    and res.stderr
-    and (res.stderr:find("No such file or directory", 1, true)
-      or res.stderr:find("no server running", 1, true)) ~= nil
-end
-
 function M.cmd_open(raw)
   local parsed, perr = M.parse_open_args(raw)
   if not parsed then
@@ -180,7 +171,7 @@ function M.cmd_open(raw)
   -- "No such file or directory" or "no server running". Treat that as an empty
   -- pane list rather than a hard error so :PTerm works on first use.
   local rows
-  if is_no_server(list) then
+  if tmux.is_no_server(list) then
     rows = {}
   elseif not list.ok then
     return nil, "tmux list-panes failed: " .. list.stderr
@@ -287,7 +278,7 @@ local PANE_ID_PATTERN = "^%%[0-9]+$"
 
 local function list_known(tmux)
   local res = tmux.run(tmux.builders.list_panes())
-  if is_no_server(res) then
+  if tmux.is_no_server(res) then
     return {}
   end
   if not res.ok then
@@ -348,7 +339,7 @@ function M.cmd_attach(target)
 
   local list = tmux.run(tmux.builders.list_panes())
   local rows
-  if is_no_server(list) then
+  if tmux.is_no_server(list) then
     rows = {}
   elseif not list.ok then
     return nil, "tmux list-panes failed: " .. list.stderr

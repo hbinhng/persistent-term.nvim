@@ -68,6 +68,7 @@ describe("persistent_term.command.cmd_open", function()
     package.loaded["persistent_term.tmux"] = {
       builders = fake_builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       parse_new_session_output = require("persistent_term.tmux").parse_new_session_output,
       run = function(argv)
@@ -121,6 +122,7 @@ describe("persistent_term.command.cmd_open", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_) return { ok = true, code = 0, stdout = "%99\t@9\tdev\n", stderr = "" } end,
     }
@@ -148,6 +150,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_)
         return { ok = true, code = 0, stdout = "%12\t@1\tdev\n%13\t@2\ttest\n%14\t@3\t\n", stderr = "" }
@@ -163,6 +166,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_)
         return { ok = true, code = 0, stdout = "%12\t@1\tdev\n%13\t@2\tdx\n%14\t@3\tother\n", stderr = "" }
@@ -179,6 +183,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(argv)
         table.insert(calls, argv)
@@ -227,6 +232,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true, version = "3.4" } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(argv)
         if argv[4] == "list-panes" then
@@ -265,6 +271,7 @@ describe("persistent_term.command.cmd_attach + complete_attach", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
       check_version = function(_) return { ok = true } end,
+      is_no_server = require("persistent_term.tmux").is_no_server,
       parse_list_panes = require("persistent_term.tmux").parse_list_panes,
       run = function(_) return { ok = true, stdout = "%99\t@9\tother\n", code = 0, stderr = "" } end,
     }
