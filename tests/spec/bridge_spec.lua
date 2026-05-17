@@ -109,7 +109,7 @@ describe("persistent_term.bridge server", function()
       on_attach = function(_) end,
       on_error = function(_) end,
     })
-    assert.equals(1, vim.fn.filereadable(sock_path) + (vim.fn.getftype(sock_path) == "socket" and 1 or 0) >= 1 and 1 or 0)
+    assert.equals("socket", vim.fn.getftype(sock_path))
     server:close()
     assert.equals("", vim.fn.getftype(sock_path))
   end)

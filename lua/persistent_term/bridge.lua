@@ -8,6 +8,10 @@ local function reply(client, line)
   client:write(line, function() end)
 end
 
+local function reply_and_close(client, line)
+  client:write(line, function() client:close() end)
+end
+
 local function handle_client_handshake(client, expected_token, on_attach, on_error)
   local buf = {}
   client:read_start(function(err, chunk)
@@ -23,19 +27,23 @@ local function handle_client_handshake(client, expected_token, on_attach, on_err
     table.insert(buf, chunk)
     local line = table.concat(buf)
     -- We treat the AUTH line as the first newline-terminated chunk.
-    if line:find("\n", 1, true) then
+    local nl = line:find("\n", 1, true)
+    if nl then
       client:read_stop()
-      local token = line:match(AUTH_PATTERN)
+      local auth_line = line:sub(1, nl)   -- includes the trailing \n
+      -- Note: line:sub(nl + 1) (any bytes after \n) is currently silently dropped.
+      -- The Go helper's protocol guarantees no post-AUTH bytes arrive before OK
+      -- is received, so this is safe today. If you change the helper to pipeline,
+      -- you must rework this path to forward leftover bytes to on_attach.
+      local token = auth_line:match(AUTH_PATTERN)
       if not token then
-        reply(client, "ERR malformed\n")
-        on_error("malformed handshake: " .. vim.inspect(line))
-        vim.defer_fn(function() client:close() end, 10)
+        reply_and_close(client, "ERR malformed\n")
+        on_error("malformed handshake: " .. vim.inspect(auth_line))
         return
       end
       if token ~= expected_token then
-        reply(client, "ERR auth\n")
+        reply_and_close(client, "ERR auth\n")
         on_error("auth failed")
-        vim.defer_fn(function() client:close() end, 10)
         return
       end
       reply(client, "OK\n")
