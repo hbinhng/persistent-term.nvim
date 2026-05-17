@@ -175,6 +175,14 @@ function M.cmd_open(raw)
     return nil, perr
   end
 
+  if parsed.argv == nil then
+    local ok, shell = pcall(M.resolve_shell)
+    if not ok then
+      return nil, tostring(shell)
+    end
+    parsed.argv = { shell }
+  end
+
   local tmux = require("persistent_term.tmux")
   local install = require("persistent_term.install")
   local bridge = require("persistent_term.bridge")

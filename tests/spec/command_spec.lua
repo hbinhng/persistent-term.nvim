@@ -137,6 +137,55 @@ describe("persistent_term.command.cmd_open", function()
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end)
 
+  it("substitutes resolved shell argv when parse returns nil argv", function()
+    local recorded_argv
+    package.loaded["persistent_term.tmux"] = {
+      builders = {
+        new_session = function(opts) recorded_argv = opts.argv; return { "true" } end,
+        list_panes  = function() return { "true" } end,
+        kill_pane   = function() return { "true" } end,
+        pipe_pane   = function() return { "true" } end,
+        set_window_option = function() return { "true" } end,
+        set_pane_option   = function() return { "true" } end,
+      },
+      run = function(_) return { ok = true, code = 0, stdout = "", stderr = "" } end,
+      parse_list_panes = function(_) return {} end,
+      parse_new_session_output = function(_)
+        return { session_id = "$1", pane_id = "%1", window_id = "@1" }
+      end,
+      check_version = function(_) return { ok = true } end,
+      is_no_server = function(_) return false end,
+    }
+    package.loaded["persistent_term.install"] = {
+      is_installed = function() return true end,
+      binary_path  = function() return "/tmp/persistent-term-pipe" end,
+    }
+    package.loaded["persistent_term.bridge"] = {
+      create_buffer = function(_)
+        local bufnr = vim.api.nvim_create_buf(false, true)
+        return { bufnr = bufnr, chan = 1, _on_input_holder = {} }
+      end,
+      start_server  = function(_) return { close = function() end } end,
+      attach        = function() end,
+      install_buffer_hook = function() end,
+    }
+    package.loaded["persistent_term.command"] = nil
+    local cmd = require("persistent_term.command")
+
+    -- Force a known shell so the assertion is deterministic.
+    local orig_env, orig_exec = vim.env.SHELL, vim.fn.executable
+    vim.env.SHELL = "/bin/dash"
+    vim.fn.executable = function(p) return p == "/bin/dash" and 1 or 0 end
+
+    local handle, err = cmd.cmd_open("noargv")
+    assert.is_nil(err)
+    assert.is_truthy(handle)
+    assert.same({ "/bin/dash" }, recorded_argv)
+
+    vim.env.SHELL = orig_env
+    vim.fn.executable = orig_exec
+  end)
+
   it("refuses when a name already exists", function()
     package.loaded["persistent_term.tmux"] = {
       builders = require("persistent_term.tmux").builders,
