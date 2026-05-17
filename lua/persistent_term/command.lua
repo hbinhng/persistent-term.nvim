@@ -509,4 +509,38 @@ function M.list()
   return out
 end
 
+function M.cmd_list()
+  local rows = M.list()
+  if #rows == 0 then
+    vim.notify("no persistent terminals", vim.log.levels.INFO)
+    return
+  end
+  local headers = { "NAME", "PANE", "ATTACHED", "STATUS" }
+  local data = {}
+  for _, r in ipairs(rows) do
+    table.insert(data, {
+      r.name,
+      r.pane_id,
+      r.attached and "yes" or "no",
+      r.status,
+    })
+  end
+  local widths = { #headers[1], #headers[2], #headers[3], #headers[4] }
+  for _, d in ipairs(data) do
+    for i = 1, 4 do
+      if #d[i] > widths[i] then widths[i] = #d[i] end
+    end
+  end
+  local function fmt_row(cells)
+    local parts = {}
+    for i = 1, 4 do
+      parts[i] = cells[i] .. string.rep(" ", widths[i] - #cells[i])
+    end
+    return table.concat(parts, "  ")
+  end
+  local lines = { fmt_row(headers) }
+  for _, d in ipairs(data) do table.insert(lines, fmt_row(d)) end
+  vim.notify(table.concat(lines, "\n"), vim.log.levels.INFO)
+end
+
 return M

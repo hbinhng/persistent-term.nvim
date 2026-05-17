@@ -522,3 +522,53 @@ describe("persistent_term.command.list", function()
     assert.is_false(command.list()[1].attached)
   end)
 end)
+
+describe("persistent_term.command.cmd_list", function()
+  local command
+  local orig_notify, captured
+
+  before_each(function()
+    package.loaded["persistent_term.command"] = nil
+    captured = {}
+    orig_notify = vim.notify
+    vim.notify = function(msg, _level) table.insert(captured, msg) end
+  end)
+
+  after_each(function()
+    vim.notify = orig_notify
+  end)
+
+  it("prints 'no persistent terminals' for empty list", function()
+    package.loaded["persistent_term.command"] = nil
+    command = require("persistent_term.command")
+    command.list = function() return {} end
+    command.cmd_list()
+    assert.equals(1, #captured)
+    assert.equals("no persistent terminals", captured[1])
+  end)
+
+  it("formats rows as a padded table with header", function()
+    command = require("persistent_term.command")
+    command.list = function()
+      return {
+        { name = "dev",   pane_id = "%12", attached = true,  status = "live" },
+        { name = "logs",  pane_id = "%18", attached = false, status = "live" },
+        { name = "build", pane_id = "%22", attached = false, status = "dead" },
+      }
+    end
+    command.cmd_list()
+    assert.equals(1, #captured)
+    local out = captured[1]
+    assert.is_truthy(out:find("NAME",     1, true))
+    assert.is_truthy(out:find("PANE",     1, true))
+    assert.is_truthy(out:find("ATTACHED", 1, true))
+    assert.is_truthy(out:find("STATUS",   1, true))
+    assert.is_truthy(out:find("dev",   1, true))
+    assert.is_truthy(out:find("logs",  1, true))
+    assert.is_truthy(out:find("build", 1, true))
+    assert.is_truthy(out:find("dead",  1, true))
+    local n = 0
+    for _ in out:gmatch("[^\n]+") do n = n + 1 end
+    assert.equals(4, n)
+  end)
+end)
