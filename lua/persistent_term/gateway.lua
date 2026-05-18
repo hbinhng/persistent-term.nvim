@@ -42,6 +42,10 @@ function M.new(opts)
   self._block_lines = {}
   -- pane_id -> { on_bytes, on_close, window_id }
   self._subs = {}
+  -- True once _run_bootstrap's last response (the list-windows that
+  -- populates _panes_by_name) has been processed. ensure_started waits
+  -- on this so callers see a populated pane map.
+  self._bootstrap_complete = false
   self._version = nil -- string, populated by bootstrap or _set_version_for_test
   return self
 end
@@ -86,6 +90,7 @@ end
 
 local function on_exit(self, _code, _signal)
   self._state = "stopped"
+  self._bootstrap_complete = false
 end
 
 function Gateway:start()
@@ -93,6 +98,7 @@ function Gateway:start()
     return
   end
   self._state = "starting"
+  self._bootstrap_complete = false
   self._transport.start(function(chunk)
     on_stdout(self, chunk)
   end, function(chunk)
@@ -154,6 +160,7 @@ function Gateway:_handle_line(line)
 
   if line == "%exit" or line:match("^%%exit ") then
     self._state = "stopped"
+    self._bootstrap_complete = false
     for _, p in ipairs(self._pending) do
       pcall(p.cb, { ok = false, stderr = "control mode exited" })
     end
@@ -256,18 +263,20 @@ function Gateway:_run_bootstrap()
       table.insert(self_ref._pending, { cmd = "<deferred-terminal-features>", cb = function() end })
     end
   end)
-  self:refresh_pane_map(function() end)
+  self:refresh_pane_map(function()
+    self_ref._bootstrap_complete = true
+  end)
 end
 
 function Gateway:ensure_started(timeout_ms)
-  if self._state == "ready" then
+  if self._bootstrap_complete then
     return true, nil
   end
   if self._state == "stopped" then
     self:start()
   end
   local ok = vim.wait(timeout_ms or 5000, function()
-    return self._state == "ready"
+    return self._bootstrap_complete
   end, 20)
   if not ok then
     return nil, "tmux -CC startup timeout (state=" .. self._state .. ")"

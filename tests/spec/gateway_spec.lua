@@ -442,4 +442,25 @@ describe("gateway bootstrap", function()
     t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n")
     assert.equals("3.4", gw:version())
   end)
+
+  it("populates pane map from list-windows before bootstrap is considered complete", function()
+    local t = make_fake_transport()
+    local gw = gateway.new({ transport = t })
+    gw:start()
+    -- Up to and including %session-changed, the gateway is "ready" but
+    -- bootstrap responses have not landed yet. Pane map must be empty.
+    t.feed("%begin 1 0 0\n%end 1 0 0\n%session-changed $0 pterm\n")
+    assert.is_nil(gw:get_pane_by_name("foo"))
+    -- Drain the 4 bootstrap send_cmds, then the list-windows response.
+    t.feed("%begin 2 1 1\n3.4\n%end 2 1 1\n") -- display-message
+    t.feed("%begin 3 2 1\n%end 3 2 1\n") -- default-terminal
+    t.feed("%begin 4 3 1\n%end 4 3 1\n") -- COLORTERM
+    t.feed("%begin 5 4 1\n%end 5 4 1\n") -- 2nd display-message (gate)
+    -- list-windows response with one existing pane named "foo".
+    t.feed("%begin 6 5 1\n@1\t%1\tfoo\t0\n%end 6 5 1\n")
+    local entry = gw:get_pane_by_name("foo")
+    assert.is_table(entry)
+    assert.equals("@1", entry.window_id)
+    assert.equals("%1", entry.pane_id)
+  end)
 end)
