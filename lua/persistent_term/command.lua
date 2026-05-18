@@ -342,18 +342,16 @@ function M.cmd_kill(bufnr)
   if not name:match("^pterm://") then
     return false, "not a persistent-term buffer"
   end
-  local gw = gateway()
   local window_id = vim.b[bufnr].persistent_term_window_id
-  if window_id then
-    gw:send_cmd("kill-window -t " .. window_id, function() end)
-    -- Eagerly remove the pane from the in-memory map so that callers that
-    -- query list() immediately after cmd_kill see a consistent view without
-    -- having to wait for the async %window-close event.
-    gw:forget_pane_by_window(window_id)
-  end
-  if vim.api.nvim_buf_is_valid(bufnr) then
-    pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
-  end
+  local pane_id   = vim.b[bufnr].persistent_term_pane_id
+  local handle = {
+    bufnr     = bufnr,
+    gateway   = gateway(),
+    window_id = window_id,
+    pane_id   = pane_id,
+    name      = vim.b[bufnr].persistent_term_name,
+  }
+  require("persistent_term.bridge").kill(handle)
   return true
 end
 
