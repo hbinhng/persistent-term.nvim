@@ -160,7 +160,9 @@ local function buf_size_for(bufnr)
   local cols, rows
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == bufnr then
-      local w = vim.api.nvim_win_get_width(win)
+      local info = vim.fn.getwininfo(win)[1]
+      local textoff = (info and info.textoff) or 0
+      local w = vim.api.nvim_win_get_width(win) - textoff
       local h = vim.api.nvim_win_get_height(win)
       if not cols or w < cols then
         cols = w

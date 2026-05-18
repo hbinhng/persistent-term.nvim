@@ -124,13 +124,23 @@ function M.resolve_shell()
   error(string.format("no usable shell: $SHELL=%q, /bin/sh missing", shell or ""), 0)
 end
 
+local function win_text_width(win)
+  local info = vim.fn.getwininfo(win)[1]
+  local textoff = (info and info.textoff) or 0
+  return vim.api.nvim_win_get_width(win) - textoff
+end
+
 local function buf_size(bufnr)
+  -- If the buffer is already displayed, use that window's text area.
   for _, win in ipairs(vim.api.nvim_list_wins()) do
     if vim.api.nvim_win_get_buf(win) == bufnr then
-      return vim.api.nvim_win_get_width(win), vim.api.nvim_win_get_height(win)
+      return win_text_width(win), vim.api.nvim_win_get_height(win)
     end
   end
-  return vim.o.columns, math.max(vim.o.lines - 2, 5)
+  -- Freshly created buffer: it will be displayed in the current window
+  -- (init.lua's M.open calls vim.cmd.buffer right after cmd_open returns).
+  local win = vim.api.nvim_get_current_win()
+  return win_text_width(win), vim.api.nvim_win_get_height(win)
 end
 
 local function gateway()
