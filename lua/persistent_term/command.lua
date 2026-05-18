@@ -192,8 +192,15 @@ function M.cmd_open(raw)
   for _, a in ipairs(parsed.argv) do
     table.insert(argv_parts, codec.shell_escape(a))
   end
-  local cmd =
-    string.format("new-window -d -t pterm -P -F '#{pane_id}\t#{window_id}' -- %s", table.concat(argv_parts, " "))
+  -- Start the new pane at Neovim's current working directory so :PTerm
+  -- behaves like :terminal — opening at the project root the user is in,
+  -- not the tmux server's initial cwd (typically $HOME).
+  local cwd = codec.shell_escape(vim.fn.getcwd())
+  local cmd = string.format(
+    "new-window -d -t pterm -c %s -P -F '#{pane_id}\t#{window_id}' -- %s",
+    cwd,
+    table.concat(argv_parts, " ")
+  )
 
   gw:send_cmd(cmd, function(r)
     if not r.ok then
