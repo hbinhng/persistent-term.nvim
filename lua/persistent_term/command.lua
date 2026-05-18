@@ -151,6 +151,10 @@ function M.cmd_open(raw)
     parsed.argv = { shell }
   end
 
+  if vim.fn.executable("tmux") ~= 1 then
+    return nil, "tmux not found on PATH"
+  end
+
   local gw = gateway()
   local ok, err = gw:ensure_started(5000)
   if not ok then
@@ -256,6 +260,9 @@ end
 function M.cmd_attach(target)
   if type(target) ~= "string" or target == "" then
     return nil, "usage: :PTermAttach {name|pane_id}"
+  end
+  if vim.fn.executable("tmux") ~= 1 then
+    return nil, "tmux not found on PATH"
   end
   local gw = gateway()
   local ok, err = gw:ensure_started(5000)

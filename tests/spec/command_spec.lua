@@ -185,6 +185,18 @@ describe("persistent_term.command cmd_open via gateway", function()
     assert.is_truthy(errors[1]:find("new%-window failed"))
     assert.is_truthy(errors[1]:find("no current client"))
   end)
+
+  it("cmd_open returns a clear error when tmux is not on PATH", function()
+    local saved_executable = vim.fn.executable
+    vim.fn.executable = function(name)
+      if name == "tmux" then return 0 end
+      return saved_executable(name)
+    end
+    local h, err = command.cmd_open("dev -- echo hi")
+    vim.fn.executable = saved_executable
+    assert.is_nil(h)
+    assert.is_truthy(err and err:find("tmux not found"))
+  end)
 end)
 
 describe("persistent_term.command cmd_kill via gateway", function()
