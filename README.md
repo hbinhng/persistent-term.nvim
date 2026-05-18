@@ -4,6 +4,10 @@ A Neovim buffer connected to a hidden tmux pane. If Neovim crashes, the process 
 
 One job. No pickers, no statusline, no project roots, no auto-restore.
 
+## Motivation
+
+I daily-drive a remote workstation over SSH. My setup is too complicated for mosh — no jump host support, no sophisticated port forwarding. So when the network stutters, the SSH connection drops, Neovim is killed, and every process running inside a `:terminal` buffer dies with it. Builds, test runs, REPL sessions — gone, no way to recover. So I wrote this.
+
 ## Requirements
 
 - Neovim **0.10** or newer
