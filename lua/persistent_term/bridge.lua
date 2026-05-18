@@ -16,6 +16,7 @@ function M.create_buffer(name)
   local bufnr = vim.api.nvim_create_buf(true, false)
   local handle = { _on_input = function() end }
   local chan = vim.api.nvim_open_term(bufnr, {
+    force_crlf = false,
     on_input = function(event, term, bnr, data)
       handle._on_input(event, term, bnr, data)
     end,
