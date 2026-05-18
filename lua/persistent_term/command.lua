@@ -366,8 +366,15 @@ function M.cmd_kill(bufnr)
 end
 
 function M.list()
+  if vim.fn.executable("tmux") ~= 1 then
+    return {}
+  end
   local gw = gateway()
-  if gw:state() ~= "ready" then
+  -- Bring the gateway up on first call so external callers (e.g. a Telescope
+  -- picker, a status-line widget) don't have to know about lifecycle. Returns
+  -- immediately on subsequent calls once bootstrap is complete.
+  local ok = gw:ensure_started(5000)
+  if not ok then
     return {}
   end
   -- Refresh the pane map synchronously so that dead-pane status and
