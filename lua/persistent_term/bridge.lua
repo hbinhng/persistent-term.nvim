@@ -51,6 +51,11 @@ function M.attach(handle, gateway, pane_id, window_id)
       -- waiting for the next user keystroke. Without this, libvterm's state
       -- updates lag visibly behind the bytes we feed it.
       vim.api.nvim__redraw({ buf = handle.bufnr, flush = true })
+      -- The output may have grown the buffer past a power-of-10 line count,
+      -- which widens the line-number gutter and shrinks libvterm's text
+      -- area. Re-sync tmux's pane size if so, otherwise the child keeps
+      -- writing at the old width and content overlaps.
+      M.maybe_resync_size(handle)
     end
   end, function()
     vim.schedule(function()
@@ -158,6 +163,37 @@ function M.kill(handle)
   if vim.api.nvim_buf_is_valid(handle.bufnr) then
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end
+end
+
+--- Check whether the buffer's current text-area size differs from the last
+--- size we told tmux about, and re-trigger resize_to if so. Called after
+--- each chan_send because output that grows the buffer can widen the
+--- line-number gutter (numberwidth bumps when line count crosses 10/100/
+--- 1000/...) and silently shrink libvterm's rendering width.
+function M.maybe_resync_size(handle)
+  if not handle.bufnr or not handle.window_id then
+    return
+  end
+  local win
+  for _, w in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(w) == handle.bufnr then
+      win = w
+      break
+    end
+  end
+  if not win then
+    return
+  end
+  local info = vim.fn.getwininfo(win)[1]
+  local textoff = (info and info.textoff) or 0
+  local cols = vim.api.nvim_win_get_width(win) - textoff
+  local rows = vim.api.nvim_win_get_height(win)
+  if handle._last_resync_cols == cols and handle._last_resync_rows == rows then
+    return
+  end
+  handle._last_resync_cols = cols
+  handle._last_resync_rows = rows
+  M.resize_to(handle, cols, rows)
 end
 
 local function buf_size_for(bufnr)
