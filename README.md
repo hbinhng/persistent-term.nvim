@@ -43,7 +43,9 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 Neovim (Lua gateway) <-CC stdio-> tmux -L persistent-term -CC <-> tmux pterm session (windows = panes)
 ```
 
-Tmux runs on its own private socket (`tmux -L persistent-term`), isolated from your normal tmux server and config. Pane names are stored as tmux pane user options (`@pterm_name`), so there is no metadata file to corrupt or stale.
+Each `:PTerm` is one window in a shared `pterm` session on a private tmux socket (`tmux -L persistent-term`), isolated from your normal tmux server and config. The plugin talks to tmux over control mode (`tmux -CC`), the same protocol iTerm2 uses for its tmux integration.
+
+The tmux server keeps running after Neovim quits, so the next Neovim launch can `:PTermAttach <name>` and find the shell exactly where you left it. Pane names are stored as tmux window user options (`@pterm_name`), so there is no metadata file to corrupt or stale.
 
 ## Recipes
 
@@ -91,18 +93,19 @@ end, { desc = "Pick a persistent-term pane" })
 - All errors and warnings show via `vim.notify` and are appended to `stdpath('log')/persistent-term.log`.
 - For verbose diagnostics, launch Neovim with `PERSISTENT_TERM_DEBUG=1`.
 
-## Limitations
+## Behavior
 
-- Multiple Neovim instances can each open their own gateway and subscribe to the same tmux session/panes independently.
-- Scrollback is replayed via `capture-pane -p -e -J` exactly once at attach time; subsequent `%output` notifications drive live updates.
-- Full-screen TUIs (`htop`, `lazygit`, nested `vim`) are best-effort; alternate-screen state may not survive reattach.
+- Multiple Neovim instances connect to the same tmux server independently. Each can subscribe to the same pane and observe the same live output.
+- `:PTermAttach` replays the pane's current screen via `capture-pane -p -e -J`; live updates resume from there. The replayed scrollback is the visible screen only, not tmux's full history buffer.
+- Full-screen TUIs (`htop`, `lazygit`, nested `nvim`) are best-effort. Alternate-screen state may not survive reattach.
+- Per-keystroke input roundtrips through `tmux send-keys`, so there is a small added latency compared to `:terminal`. For ordinary shell use it is not noticeable.
 
 ## Development
 
 ```bash
 make deps      # clone plenary.nvim into .deps/
 make test      # nvim --headless busted (requires tmux on PATH)
-make lint      # luacheck + stylua --check
+make lua-lint  # luacheck + stylua --check
 make clean
 ```
 
