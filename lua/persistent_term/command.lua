@@ -402,6 +402,15 @@ function M.list()
 end
 
 function M.cmd_list()
+  if vim.fn.executable("tmux") ~= 1 then
+    vim.notify("tmux not found on PATH", vim.log.levels.ERROR)
+    return
+  end
+  local ok, err = gateway():ensure_started(5000)
+  if not ok then
+    vim.notify(err or "gateway not ready", vim.log.levels.ERROR)
+    return
+  end
   local rows = M.list()
   if #rows == 0 then
     vim.notify("no persistent terminals", vim.log.levels.INFO)
