@@ -1,5 +1,4 @@
 .deps/
 go/bin/
-dist/
 *.log
 .luarc.json
