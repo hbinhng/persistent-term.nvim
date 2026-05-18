@@ -47,6 +47,10 @@ function M.attach(handle, gateway, pane_id, window_id)
     end
     if vim.api.nvim_buf_is_valid(handle.bufnr) then
       vim.api.nvim_chan_send(handle.chan, bytes)
+      -- Wake the main loop so the buffer redraws immediately instead of
+      -- waiting for the next user keystroke. Without this, libvterm's state
+      -- updates lag visibly behind the bytes we feed it.
+      vim.api.nvim__redraw({ buf = handle.bufnr, flush = true })
     end
   end, function()
     vim.schedule(function()
