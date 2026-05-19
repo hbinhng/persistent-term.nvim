@@ -206,10 +206,20 @@ describe("codec.encode_send_keys", function()
     }, cmds)
   end)
 
-  it("encodes UTF-8 multibyte sequences as hex (one command per run)", function()
-    -- é is 0xc3 0xa9; both >= 0x80, both hex bucket.
+  it("encodes a UTF-8 multibyte sequence as one literal command", function()
+    -- é is 0xc3 0xa9. tmux's `send-keys 0xc3` parses 0xc3 as a key code,
+    -- not a raw byte, and key codes >= 0x80 outside KEYC_BASE_UCS get
+    -- dropped silently. Route UTF-8 high bytes through `send-keys -l`
+    -- so tmux decodes them as UTF-8 codepoints and emits them to the pane.
     local cmds = codec.encode_send_keys("\xc3\xa9", "%1", "3.4")
-    assert.same({ "send-keys -t %1 0xc3 0xa9" }, cmds)
+    assert.same({ "send-keys -lt %1 '\xc3\xa9'" }, cmds)
+  end)
+
+  it("batches a Vietnamese phrase with ASCII tail into one literal command", function()
+    -- "đẹp" is 0xc4 0x91  0xe1 0xba 0xb9  0x70 — three codepoints, six bytes.
+    -- The trailing ASCII 'p' must stay in the same literal run, not split off.
+    local cmds = codec.encode_send_keys("đẹp", "%1", "3.4")
+    assert.same({ "send-keys -lt %1 'đẹp'" }, cmds)
   end)
 
   it("includes the printable allow-list special chars in the literal bucket", function()

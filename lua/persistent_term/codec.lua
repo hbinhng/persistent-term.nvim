@@ -115,6 +115,12 @@ local function is_printable_allowlist(c)
   if (c >= 0x30 and c <= 0x39) or (c >= 0x41 and c <= 0x5a) or (c >= 0x61 and c <= 0x7a) then
     return true
   end
+  -- UTF-8 high bytes must route through `send-keys -l`. tmux parses
+  -- `send-keys 0xNN` as a key code, and codes >= 0x80 outside KEYC_BASE_UCS
+  -- are silently dropped — Vietnamese, CJK, accented Latin all vanished.
+  if c >= 0x80 then
+    return true
+  end
   -- + / ) : , _
   return c == 0x2b or c == 0x2f or c == 0x29 or c == 0x3a or c == 0x2c or c == 0x5f
 end
