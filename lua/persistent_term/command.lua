@@ -340,6 +340,9 @@ function M.cmd_attach(target)
   bridge.attach(handle, gw, resolved.pane_id, resolved.window_id)
   vim.b[buf.bufnr].persistent_term_pane_id = resolved.pane_id
   vim.b[buf.bufnr].persistent_term_window_id = resolved.window_id
+  -- The pane still has the size of whichever Neovim last drove it; claim it
+  -- for this window, or the pane keeps rendering at the old width.
+  bridge.resize_to(handle, buf_size(buf.bufnr))
 
   -- Replay scrollback.
   gw:send_cmd("capture-pane -p -e -J -t " .. resolved.pane_id, function(r)

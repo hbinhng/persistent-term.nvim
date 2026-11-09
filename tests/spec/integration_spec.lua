@@ -592,6 +592,16 @@ describe("persistent-term integration", function()
     assert.is_true(list[1].attached)
   end)
 
+  it("PTermAttach resizes the pane to the attaching window", function()
+    local _, pane_id = open_sized("szx")
+    vim.cmd("PTermDetach")
+    vim.cmd("set columns=60")
+    vim.cmd("PTermAttach szx")
+    assert.is_truthy(wait_until(function()
+      return pane_width(pane_id) == "60"
+    end, 3000), "pane kept the old size: " .. pane_width(pane_id))
+  end)
+
   it("PTermDetach on a non-pterm buffer reports an error", function()
     vim.cmd("enew")
     local out = capture_notify(function()
