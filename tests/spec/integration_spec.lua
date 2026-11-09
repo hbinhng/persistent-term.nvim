@@ -8,12 +8,16 @@ if not has_tmux then
   return
 end
 
+-- Set by tests/minimal_init.lua so the suite never touches the real server.
+local SOCKET = vim.env.PERSISTENT_TERM_SOCKET
+assert(SOCKET and SOCKET ~= "persistent-term", "run via tests/minimal_init.lua (needs an isolated socket)")
+
 local function run(argv)
   return vim.system(argv, { text = true }):wait()
 end
 
 local function reset_tmux_server()
-  run({ "tmux", "-L", "persistent-term", "kill-server" })
+  run({ "tmux", "-L", SOCKET, "kill-server" })
   -- Do NOT remove the stale socket file: tmux -L requires the socket file to
   -- exist in order to start a new server at that path. When kill-server exits,
   -- the socket file is left behind in a stale (unconnectable) state, and the
@@ -131,7 +135,7 @@ describe("persistent-term integration", function()
   it("duplicate-name :PTerm fails", function()
     vim.cmd([[PTerm dup -- bash -c 'sleep 30']])
     local result = pcall(vim.cmd, [[PTerm dup -- bash -c 'sleep 30']])
-    local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+    local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
     local count = 0
     for line in (res.stdout or ""):gmatch("[^\n]+") do
       if line == "dup" then
@@ -145,7 +149,7 @@ describe("persistent-term integration", function()
     vim.cmd([[PTerm kx -- bash -c 'sleep 30']])
     vim.cmd("PTermKill")
     assert.is_truthy(wait_until(function()
-      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+      local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
       return not (res.stdout or ""):find("kx", 1, true)
     end, 3000))
   end)
@@ -159,7 +163,7 @@ describe("persistent-term integration", function()
     local res = run({
       "tmux",
       "-L",
-      "persistent-term",
+      SOCKET,
       "display-message",
       "-p",
       "-t",
@@ -171,7 +175,7 @@ describe("persistent-term integration", function()
 
   it("PTerm works with no pre-existing tmux server", function()
     -- before_each already killed the server. Verify list-panes really fails.
-    local probe = run({ "tmux", "-L", "persistent-term", "list-panes", "-a" })
+    local probe = run({ "tmux", "-L", SOCKET, "list-panes", "-a" })
     assert.is_false(probe.code == 0)
     assert.is_truthy((probe.stderr or ""):find("no server running", 1, true))
 
@@ -194,7 +198,7 @@ describe("persistent-term integration", function()
 
   it("PTermAttach to unknown name with no server reports a clean error", function()
     -- before_each already killed the server.
-    local probe = run({ "tmux", "-L", "persistent-term", "list-panes", "-a" })
+    local probe = run({ "tmux", "-L", SOCKET, "list-panes", "-a" })
     assert.is_false(probe.code == 0)
 
     -- Should NOT propagate "no server running"; should report "unknown pane".
@@ -248,7 +252,7 @@ describe("persistent-term integration", function()
     vim.cmd([[PTerm l2 -- bash -c 'sleep 1; printf two;   sleep 30']])
     assert.is_truthy(
       wait_until(function()
-        local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+        local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
         local seen_l1, seen_l2
         for line in (res.stdout or ""):gmatch("[^\n]+") do
           if line == "l1" then
@@ -285,7 +289,7 @@ describe("persistent-term integration", function()
     vim.cmd([[PTerm k2 -- bash -c 'sleep 1; printf two; sleep 30']])
     assert.is_truthy(
       wait_until(function()
-        local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+        local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
         return (res.stdout or ""):find("k1") and (res.stdout or ""):find("k2")
       end, 3000),
       "tmux never showed both k1 and k2"
@@ -301,7 +305,7 @@ describe("persistent-term integration", function()
     require("persistent_term.command").cmd_kill(k1_buf)
     assert.is_truthy(
       wait_until(function()
-        local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}" })
+        local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
         return not (res.stdout or ""):find("k1", 1, true)
       end, 3000),
       "k1 never disappeared from tmux after kill"
@@ -316,7 +320,7 @@ describe("persistent-term integration", function()
   it("PTermList marks a dead pane as STATUS=dead", function()
     vim.cmd([[PTerm dx -- bash -c 'sleep 1; exit 0']])
     assert.is_truthy(wait_until(function()
-      local res = run({ "tmux", "-L", "persistent-term", "list-panes", "-aF", "#{@pterm_name}\t#{pane_dead}" })
+      local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}\t#{pane_dead}" })
       for line in (res.stdout or ""):gmatch("[^\n]+") do
         local n, d = line:match("^(.-)\t(.)$")
         if n == "dx" and d == "1" then
@@ -372,11 +376,11 @@ describe("persistent-term integration", function()
     )
 
     -- The server-side options must be set.
-    local opt = run({ "tmux", "-L", "persistent-term", "show-options", "-gv", "default-terminal" })
+    local opt = run({ "tmux", "-L", SOCKET, "show-options", "-gv", "default-terminal" })
     assert.equals(0, opt.code, "show-options default-terminal failed: " .. (opt.stderr or ""))
     assert.equals("xterm-256color", (opt.stdout or ""):gsub("%s+$", ""))
 
-    local envr = run({ "tmux", "-L", "persistent-term", "show-environment", "-g", "COLORTERM" })
+    local envr = run({ "tmux", "-L", SOCKET, "show-environment", "-g", "COLORTERM" })
     assert.equals(0, envr.code, "show-environment COLORTERM failed: " .. (envr.stderr or ""))
     assert.equals("COLORTERM=truecolor", (envr.stdout or ""):gsub("%s+$", ""))
 
@@ -385,7 +389,7 @@ describe("persistent-term integration", function()
     local vres = run({ "tmux", "-V" })
     local vstr = (vres.stdout or ""):match("tmux%s+(%S+)")
     if vstr and require("persistent_term.tmux").version_at_least(vstr, "3.2") then
-      local feat = run({ "tmux", "-L", "persistent-term", "show-options", "-gv", "terminal-features" })
+      local feat = run({ "tmux", "-L", SOCKET, "show-options", "-gv", "terminal-features" })
       assert.equals(0, feat.code, "show-options terminal-features failed: " .. (feat.stderr or ""))
       assert.is_truthy(
         (feat.stdout or ""):find("xterm-256color:RGB", 1, true),
@@ -473,7 +477,7 @@ describe("persistent-term integration", function()
     -- Kill the tmux window directly (bypassing :PTermKill which deletes the
     -- buffer first). The %window-close notification from tmux will fire the
     -- on_close callback -> bridge.detach -> buffer rename to [detached].
-    run({ "tmux", "-L", "persistent-term", "kill-window", "-t", window_id })
+    run({ "tmux", "-L", SOCKET, "kill-window", "-t", window_id })
     assert.is_truthy(wait_until(function()
       if not vim.api.nvim_buf_is_valid(bufnr) then
         return false

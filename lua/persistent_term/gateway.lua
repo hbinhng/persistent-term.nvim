@@ -361,9 +361,19 @@ function M._reset_singleton_for_test()
   end
 end
 
--- Default production transport. Spawns `tmux -L persistent-term -CC
+-- Default production transport. Spawns `tmux -L <socket> -CC
 -- new-session -A -s pterm -x 80 -y 24` via jobstart with pty=true so that
 -- tmux -CC gets the PTY it requires (tcgetattr would fail on plain pipes).
+--- tmux socket name (`tmux -L`). Overridable via $PERSISTENT_TERM_SOCKET so
+--- the test suite can run against a throwaway server.
+function M.socket_name()
+  local s = vim.env.PERSISTENT_TERM_SOCKET
+  if s and s ~= "" then
+    return s
+  end
+  return "persistent-term"
+end
+
 function M._make_vim_system_transport()
   local job_id
   return {
@@ -371,7 +381,7 @@ function M._make_vim_system_transport()
       -- pty=true merges stdout+stderr into a single stream delivered via
       -- on_stdout; on_stderr is not called for PTY jobs.
       job_id = vim.fn.jobstart(
-        { "tmux", "-L", "persistent-term", "-CC", "new-session", "-A", "-s", "pterm", "-x", "80", "-y", "24" },
+        { "tmux", "-L", M.socket_name(), "-CC", "new-session", "-A", "-s", "pterm", "-x", "80", "-y", "24" },
         {
           pty = true,
           on_stdout = function(_, data)
