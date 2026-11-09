@@ -565,9 +565,11 @@ describe("persistent-term integration", function()
     assert.is_truthy(row, "pane should still exist in tmux")
     assert.is_false(row.attached)
     assert.equals("live", row.status)
+    vim.wait(300) -- let the released claim settle before sampling
+    local before = pane_width(pane_id)
     vim.cmd("set columns=50")
     vim.wait(300)
-    assert.equals("70", pane_width(pane_id))
+    assert.equals(before, pane_width(pane_id))
   end
 
   it(":bdelete! detaches the bridge and keeps the pane", function()
@@ -597,9 +599,53 @@ describe("persistent-term integration", function()
     vim.cmd("PTermDetach")
     vim.cmd("set columns=60")
     vim.cmd("PTermAttach szx")
-    assert.is_truthy(wait_until(function()
-      return pane_width(pane_id) == "60"
-    end, 3000), "pane kept the old size: " .. pane_width(pane_id))
+    assert.is_truthy(
+      wait_until(function()
+        return pane_width(pane_id) == "60"
+      end, 3000),
+      "pane kept the old size: " .. pane_width(pane_id)
+    )
+  end)
+
+  it("a detached Neovim does not cap another client's resize", function()
+    -- This Neovim created the session, so its control client carries the
+    -- session size; a per-window `refresh-client -C` claim from it would
+    -- also outlive the detach. Either used to cap the pane for every other
+    -- Neovim. A raw control client stands in for the second Neovim.
+    local _, pane_id = open_sized("hox")
+    local window_id = vim.b.persistent_term_window_id
+    local other = vim.system({ "tmux", "-L", SOCKET, "-C", "attach", "-t", "pterm" }, { stdin = true })
+    vim.cmd("PTermDetach")
+    other:write(string.format("resize-window -t %s -x 150 -y 40\n", window_id))
+    local resized = wait_until(function()
+      return pane_width(pane_id) == "150"
+    end, 3000)
+    other:write("detach\n")
+    other:wait(2000)
+    assert.is_truthy(resized, "detached Neovim still caps the size: " .. pane_width(pane_id))
+  end)
+
+  it("PTermAttach finds a pane another Neovim created after this one connected", function()
+    vim.cmd([[PTerm first -- bash -c 'sleep 300']])
+    -- Created behind this gateway's back, as a second Neovim would.
+    local res = run({
+      "tmux",
+      "-L",
+      SOCKET,
+      "new-window",
+      "-d",
+      "-t",
+      "pterm",
+      "-P",
+      "-F",
+      "#{window_id}",
+      "--",
+      "sleep",
+      "300",
+    })
+    run({ "tmux", "-L", SOCKET, "set-option", "-wt", vim.trim(res.stdout), "@pterm_name", "later" })
+    vim.cmd("PTermAttach later")
+    assert.equals("pterm://later", vim.api.nvim_buf_get_name(0))
   end)
 
   it("PTermDetach on a non-pterm buffer reports an error", function()

@@ -100,7 +100,7 @@ end, { desc = "Pick a persistent-term pane" })
 
 ## Behavior
 
-- Multiple Neovim instances connect to the same tmux server independently. Each can subscribe to the same pane and observe the same live output.
+- Multiple Neovim instances connect to the same tmux server independently. Each can subscribe to the same pane and observe the same live output. The pane takes the size of whichever attached instance attached or resized last; a detached instance has no say.
 - `:PTermAttach` replays the pane's current screen via `capture-pane -p -e -J`; live updates resume from there. The replayed scrollback is the visible screen only, not tmux's full history buffer.
 - Full-screen TUIs (`htop`, `lazygit`, nested `nvim`) are best-effort. Alternate-screen state may not survive reattach.
 - Per-keystroke input roundtrips through `tmux send-keys`, so there is a small added latency compared to `:terminal`. For ordinary shell use it is not noticeable.

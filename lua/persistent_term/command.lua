@@ -311,6 +311,18 @@ function M.cmd_attach(target)
     end
   else
     local e = gw:get_pane_by_name(target)
+    if not e then
+      -- The pane map is only rebuilt on demand, so a pane another Neovim
+      -- created after this one connected is unknown until we refresh.
+      local refreshed = false
+      gw:refresh_pane_map(function()
+        refreshed = true
+      end)
+      vim.wait(2000, function()
+        return refreshed
+      end, 20)
+      e = gw:get_pane_by_name(target)
+    end
     if e then
       resolved = { pane_id = e.pane_id, window_id = e.window_id, name = target }
     end

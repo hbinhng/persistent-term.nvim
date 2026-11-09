@@ -134,14 +134,12 @@ function M.resize_to(handle, cols, rows)
       if not handle.gateway or not handle.window_id then
         return
       end
-      local cmd
-      local tmux = require("persistent_term.tmux")
-      local v = handle.gateway:version() or "3.0"
-      if tmux.version_at_least(v, "3.4") then
-        cmd = string.format("refresh-client -C %s:%dx%d", handle.window_id, size.cols, size.rows)
-      else
-        cmd = string.format("resize-window -t %s -x %d -y %d", handle.window_id, size.cols, size.rows)
-      end
+      -- resize-window, not per-window `refresh-client -C @w:WxH`: tmux sizes
+      -- a window to the smallest claim (or client size) among its control
+      -- clients, so with two Neovims connected a detached or merely
+      -- connected one would cap the other. resize-window pins the window
+      -- to an explicit size, and the last Neovim to attach or resize wins.
+      local cmd = string.format("resize-window -t %s -x %d -y %d", handle.window_id, size.cols, size.rows)
       handle.gateway:send_cmd(cmd, function(r)
         if not r.ok then
           require("persistent_term.log").warn(
@@ -167,7 +165,8 @@ function M.kill(handle)
       end
     end)
   end
-  M.detach(handle, "kill")
+  M.detach(handle)
+  require("persistent_term.log").debug("bridge detached: kill")
   if vim.api.nvim_buf_is_valid(handle.bufnr) then
     vim.api.nvim_buf_delete(handle.bufnr, { force = true })
   end
