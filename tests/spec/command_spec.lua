@@ -145,10 +145,6 @@ describe("persistent_term.command cmd_open via gateway", function()
   end)
 
   it("returns an error if new-window fails", function()
-    local _, err
-    vim.schedule(function()
-      _, err = command.cmd_open("dev -- echo hi")
-    end)
     -- The synchronous path enqueues and waits — see implementation. For this
     -- test we synchronously call cmd_open and rely on it returning the error
     -- propagated from new-window's response (the implementation surfaces it
@@ -189,7 +185,9 @@ describe("persistent_term.command cmd_open via gateway", function()
   it("cmd_open returns a clear error when tmux is not on PATH", function()
     local saved_executable = vim.fn.executable
     vim.fn.executable = function(name)
-      if name == "tmux" then return 0 end
+      if name == "tmux" then
+        return 0
+      end
       return saved_executable(name)
     end
     local h, err = command.cmd_open("dev -- echo hi")
@@ -302,8 +300,8 @@ describe("persistent_term.command list/complete via gateway", function()
       end)
       return out
     end
-    function fake_gw:refresh_pane_map(_cb)
-      _cb()
+    function fake_gw:refresh_pane_map(cb)
+      cb()
     end
     package.loaded["persistent_term.gateway"] = {
       singleton = function()

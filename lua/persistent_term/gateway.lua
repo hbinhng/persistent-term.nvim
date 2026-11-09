@@ -377,7 +377,7 @@ end
 function M._make_vim_system_transport()
   local job_id
   return {
-    start = function(on_stdout, _on_stderr, on_exit)
+    start = function(on_stdout_cb, _on_stderr, on_exit_cb)
       -- pty=true merges stdout+stderr into a single stream delivered via
       -- on_stdout; on_stderr is not called for PTY jobs.
       job_id = vim.fn.jobstart(
@@ -389,11 +389,11 @@ function M._make_vim_system_transport()
             -- gateway's line-based parser sees a normal stream.
             local chunk = table.concat(data, "\n")
             if chunk ~= "" then
-              on_stdout(chunk)
+              on_stdout_cb(chunk)
             end
           end,
-          on_exit = function(_, code, _signal)
-            on_exit(code, _signal)
+          on_exit = function(_, code, signal)
+            on_exit_cb(code, signal)
           end,
         }
       )

@@ -134,7 +134,7 @@ describe("persistent-term integration", function()
 
   it("duplicate-name :PTerm fails", function()
     vim.cmd([[PTerm dup -- bash -c 'sleep 30']])
-    local result = pcall(vim.cmd, [[PTerm dup -- bash -c 'sleep 30']])
+    pcall(vim.cmd, [[PTerm dup -- bash -c 'sleep 30']])
     local res = run({ "tmux", "-L", SOCKET, "list-panes", "-aF", "#{@pterm_name}" })
     local count = 0
     for line in (res.stdout or ""):gmatch("[^\n]+") do

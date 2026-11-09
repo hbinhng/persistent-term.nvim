@@ -375,13 +375,13 @@ function M.cmd_kill(bufnr)
     return false, "not a persistent-term buffer"
   end
   local window_id = vim.b[bufnr].persistent_term_window_id
-  local pane_id   = vim.b[bufnr].persistent_term_pane_id
+  local pane_id = vim.b[bufnr].persistent_term_pane_id
   local handle = {
-    bufnr     = bufnr,
-    gateway   = gateway(),
+    bufnr = bufnr,
+    gateway = gateway(),
     window_id = window_id,
-    pane_id   = pane_id,
-    name      = vim.b[bufnr].persistent_term_name,
+    pane_id = pane_id,
+    name = vim.b[bufnr].persistent_term_name,
   }
   require("persistent_term.bridge").kill(handle)
   return true

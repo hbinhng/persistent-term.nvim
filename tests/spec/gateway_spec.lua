@@ -235,7 +235,7 @@ describe("gateway subscribers", function()
 
   it("drops %output for an unknown pane id without erroring", function()
     local t = make_fake_transport()
-    local gw = ready_gw(t)
+    ready_gw(t)
     -- No subscriber.
     assert.has_no.errors(function()
       t.feed("%output %99 hello\n")

@@ -10,9 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
       - name: Install Lua linters
         run: |
           sudo apt-get update
@@ -21,7 +18,7 @@ jobs:
           curl -sSL https://github.com/JohnnyMorganz/StyLua/releases/latest/download/stylua-linux-x86_64.zip -o /tmp/stylua.zip
           (cd /tmp && unzip -o stylua.zip && sudo install -m 0755 stylua /usr/local/bin/stylua)
       - name: Lint
-        run: make lint
+        run: make lua-lint
 
   test:
     needs: lint
@@ -33,9 +30,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.22"
       - name: Install tmux (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y tmux
@@ -46,7 +40,5 @@ jobs:
         with:
           neovim: true
           version: ${{ matrix.nvim }}
-      - name: Build helper
-        run: make build
       - name: Test
         run: make test
