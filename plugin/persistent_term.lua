@@ -27,6 +27,10 @@ vim.api.nvim_create_user_command("PTermKill", function(_)
   require("persistent_term").kill()
 end, { desc = "Kill the current persistent terminal" })
 
+vim.api.nvim_create_user_command("PTermDetach", function(_)
+  require("persistent_term").detach()
+end, { desc = "Detach the current persistent terminal, keeping the pane running" })
+
 vim.api.nvim_create_user_command("PTermList", function(_)
   require("persistent_term").cmd_list()
 end, { desc = "List persistent terminals" })

@@ -21,7 +21,7 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 ```lua
 {
   "hbinhng/persistent-term.nvim",
-  cmd = { "PTerm", "PTermAttach", "PTermKill", "PTermList" },
+  cmd = { "PTerm", "PTermAttach", "PTermDetach", "PTermKill", "PTermList" },
 }
 ```
 
@@ -33,10 +33,11 @@ With [lazy.nvim](https://github.com/folke/lazy.nvim):
 :PTermAttach dev                   " reopen a buffer for an existing pane (after restart, etc.)
 :PTermAttach %12                   " same, but by raw tmux pane id
 :PTermList                         " print every pterm pane on the tmux server
+:PTermDetach                       " close the current buffer, keep the pane running
 :PTermKill                         " kill the current buffer's pane
 ```
 
-- `:bd` (or `BufWipeout`) detaches the bridge but keeps the pane running. Reattach with `:PTermAttach`.
+- `:PTermDetach`, `:bd` or `:bw` detaches this Neovim from the pane but keeps the pane running. A detached instance stops sending input and resizes, so you can move a pane to another Neovim without quitting this one: detach here, `:PTermAttach` there.
 - `:PTermKill` is the only command that destroys the pane.
 - Tab-completion on `:PTermAttach` lists every known name and raw pane id.
 - `:PTermList` columns: `NAME PANE ATTACHED STATUS`. `ATTACHED=yes` means this Neovim instance has a live buffer for the pane; `STATUS=dead` means the pane's process exited but tmux preserved the pane (`remain-on-exit on`).

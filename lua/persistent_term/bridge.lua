@@ -97,7 +97,15 @@ function M.detach(handle, reason)
   if handle._on_input_holder then
     handle._on_input_holder._on_input = function() end
   end
-  if vim.api.nvim_buf_is_valid(handle.bufnr) then
+  -- Drop the resize autocmds too: a detached buffer must never push its size
+  -- to tmux, or it fights whichever Neovim the pane is now attached to.
+  if handle._augroup then
+    pcall(vim.api.nvim_del_augroup_by_id, handle._augroup)
+    handle._augroup = nil
+  end
+  -- Skip the rename when the buffer is going away: renaming leaves the old
+  -- pterm:// name behind as an unlisted alternate buffer.
+  if vim.api.nvim_buf_is_valid(handle.bufnr) and not handle._unloading then
     rename_buffer(handle.bufnr, "pterm://" .. (handle.name or "?") .. " [detached]")
   end
   if reason then
@@ -118,7 +126,7 @@ function M.resize_to(handle, cols, rows)
   handle._resize_timer = timer
   timer:start(RESIZE_DEBOUNCE_MS, 0, function()
     vim.schedule(function()
-      if not handle._pending_size then
+      if handle._closing or not handle._pending_size then
         return
       end
       local size = handle._pending_size
@@ -217,15 +225,26 @@ end
 
 function M.install_buffer_hook(handle)
   local group = vim.api.nvim_create_augroup("PersistentTerm_" .. handle.bufnr, { clear = true })
-  vim.api.nvim_create_autocmd("BufWipeout", {
+  handle._augroup = group
+  -- BufUnload, not BufWipeout: `:bd` only unloads a listed buffer, so a
+  -- wipeout-only hook left the bridge subscribed and resizing the pane.
+  vim.api.nvim_create_autocmd("BufUnload", {
     group = group,
     buffer = handle.bufnr,
     once = true,
     callback = function()
-      M.detach(handle, "buffer wiped")
-      if handle._on_detach then
-        handle._on_detach()
-      end
+      handle._unloading = true
+      M.detach(handle)
+      require("persistent_term.log").debug("bridge detached: buffer unloaded")
+      -- Wipe the unloaded husk so its pterm:// name doesn't linger, which
+      -- would mark the pane attached in list() and block a re-attach from
+      -- reusing the name. Can't wipe from inside BufUnload, so defer.
+      local bufnr = handle.bufnr
+      vim.schedule(function()
+        if vim.api.nvim_buf_is_valid(bufnr) and not vim.api.nvim_buf_is_loaded(bufnr) then
+          pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+        end
+      end)
     end,
   })
   vim.api.nvim_create_autocmd({ "VimResized", "WinResized" }, {

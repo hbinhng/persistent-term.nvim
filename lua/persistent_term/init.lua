@@ -32,6 +32,13 @@ function M.kill()
   end
 end
 
+function M.detach()
+  local ok, err = require("persistent_term.command").cmd_detach()
+  if not ok then
+    require("persistent_term.log").error(err)
+  end
+end
+
 function M.complete_attach(arg_lead, cmd_line, cursor_pos)
   return require("persistent_term.command").complete_attach(arg_lead, cmd_line, cursor_pos)
 end

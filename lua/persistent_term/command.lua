@@ -372,6 +372,17 @@ function M.cmd_kill(bufnr)
   return true
 end
 
+function M.cmd_detach(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_get_name(bufnr):match("^pterm://") then
+    return false, "not a persistent-term buffer"
+  end
+  -- Closing the buffer fires the BufUnload hook, which detaches the bridge
+  -- and leaves the pane running in tmux.
+  vim.api.nvim_buf_delete(bufnr, { force = true })
+  return true
+end
+
 function M.list()
   if vim.fn.executable("tmux") ~= 1 then
     return {}

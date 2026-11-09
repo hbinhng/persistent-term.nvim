@@ -526,4 +526,77 @@ describe("persistent-term integration", function()
     end
     assert.is_true(found)
   end)
+
+  local function pane_width(pane_id)
+    local res = run({ "tmux", "-L", SOCKET, "display-message", "-p", "-t", pane_id, "#{pane_width}" })
+    return vim.trim(res.stdout or "")
+  end
+
+  -- Open a pane at a known width and return its ids once tmux has it.
+  local function open_sized(name)
+    vim.cmd("set columns=70")
+    vim.cmd("PTerm " .. name .. [[ -- bash -c 'sleep 300']])
+    local bufnr = vim.api.nvim_get_current_buf()
+    local pane_id = vim.b[bufnr].persistent_term_pane_id
+    assert.is_truthy(wait_until(function()
+      return pane_width(pane_id) == "70"
+    end, 3000))
+    return bufnr, pane_id
+  end
+
+  -- After detaching, this Neovim must stop driving the pane: no buffer, no
+  -- subscription, not listed as attached, and resizes no longer reach tmux.
+  -- The pane itself stays alive.
+  local function assert_detached(name, pane_id)
+    vim.wait(50) -- let the deferred wipe of an unloaded buffer run
+    for _, b in ipairs(vim.api.nvim_list_bufs()) do
+      assert.is_falsy(
+        vim.api.nvim_buf_get_name(b):find("pterm://" .. name, 1, true),
+        "stale buffer left behind: " .. vim.api.nvim_buf_get_name(b)
+      )
+    end
+    assert.is_nil(require("persistent_term.gateway").singleton()._subs[pane_id])
+    local row
+    for _, r in ipairs(require("persistent_term").list()) do
+      if r.name == name then
+        row = r
+      end
+    end
+    assert.is_truthy(row, "pane should still exist in tmux")
+    assert.is_false(row.attached)
+    assert.equals("live", row.status)
+    vim.cmd("set columns=50")
+    vim.wait(300)
+    assert.equals("70", pane_width(pane_id))
+  end
+
+  it(":bdelete! detaches the bridge and keeps the pane", function()
+    local _, pane_id = open_sized("bdx")
+    vim.cmd("bdelete!")
+    assert_detached("bdx", pane_id)
+  end)
+
+  it("PTermDetach detaches the bridge and keeps the pane", function()
+    local _, pane_id = open_sized("dtx")
+    vim.cmd("PTermDetach")
+    assert_detached("dtx", pane_id)
+  end)
+
+  it("PTermAttach after PTermDetach reattaches under the same name", function()
+    open_sized("rtx")
+    vim.cmd("PTermDetach")
+    vim.cmd("PTermAttach rtx")
+    assert.equals("pterm://rtx", vim.api.nvim_buf_get_name(0))
+    local list = require("persistent_term").list()
+    assert.equals(1, #list)
+    assert.is_true(list[1].attached)
+  end)
+
+  it("PTermDetach on a non-pterm buffer reports an error", function()
+    vim.cmd("enew")
+    local out = capture_notify(function()
+      vim.cmd("PTermDetach")
+    end)
+    assert.is_truthy(out:find("not a persistent-term buffer", 1, true), "got: " .. out)
+  end)
 end)
